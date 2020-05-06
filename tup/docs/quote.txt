@@ -1,0 +1,113 @@
+23.4.14.1. Do I need to re-make the world for every change?
+
+There is no easy answer to this one, as it depends on the nature of the change. For example, if you just ran CVSup, and it has shown the following files as being updated:
+
+src/games/cribbage/instr.c
+src/games/sail/pl_main.c
+src/release/sysinstall/config.c
+src/release/sysinstall/media.c
+src/share/mk/bsd.port.mk
+
+it probably is not worth rebuilding the entire world. You could just go to the appropriate sub-directories and make all install, and that's about it. But if something major changed, for example src/lib/libc/stdlib then you should either re-make the world, or at least those parts of it that are statically linked (as well as anything else you might have added that is statically linked).
+
+At the end of the day, it is your call. You might be happy re-making the world every fortnight say, and let changes accumulate over that fortnight. Or you might want to re-make just those things that have changed, and be confident you can spot all the dependencies.
+ - http://64.233.169.104/search?q=cache:9Z-s2h_UBcoJ:www.freebsd.org/doc/en/books/handbook/makeworld.html+freebsd+make+world&hl=en&ct=clnk&cd=1&gl=us
+#
+ [»]  Re: A coindience?
+ by smithdev - Jul 5th 2003 18:14:40
+
+ I'll chip in for the fairly sophisticated user who is new to the autotools.
+
+ I've the goat book, the potto book (that O'Reilly one) and a couple of
+ others. I've read the info bits.
+
+ I couldn't even get started until I found the autoproject script here on
+ Freshmeat.
+
+ I think that the best thing that could reasonably happen is cribbing an idea
+ from the kernel community: a make menuconfig to streamline the process.
+
+ -- 
+ gentoo is all that
+
+  - http://freshmeat.net/articles/view/889/
+#
+Renaming is the killer app of distributed version control
+ - http://www.markshuttleworth.com/archives/123
+
+And by extension, why not your build system?
+#
+Fast iteration is more than just about time and speed. It's also about
+how you feel about the code and what you dare do with it.
+ - http://gamesfromwithin.com/?p=42
+#
+
+What annoys me: Ant is broken (Score:5, Insightful)
+by The Pim (140414) on Friday June 14 2002, @01:25PM (#3702950)
+
+I've gotten used to holding my tongue, but since you started it, I'll put my
+rant under yours. :-)
+
+I've used Ant, and concluded that it's only strength is that it comes with a
+bunch of modules ready-to-use. (Never mind that most of those modules would be
+five lines in a more modular, flexible system like make.) Further, in several
+respects, it has several serious regressions compared to other build systems.
+In light of this, it seems to me that the main reason Ant is popular is that
+it attempts to cover for the deficiencies of common Java compilers. What a
+mess!
+
+The first regression is that Ant (by default) doesn't do reliable rebuilds.
+The most basic function of a build system is to produce correct output, and
+Ant doesn't do it! Its default algorithm for rebuilding is to compile only
+those source files that are newer than their corresponding class files. So,
+for example, if you change an interface, Ant won't recompile all the classes
+that implement the interface. You won't know that they are broken until you
+(or someone else) tries a full rebuild.
+
+Ant has a "depend" task that attempts to fix this, by tracking source
+dependencies. Unfortunately, because most Java compilers don't do their part,
+Ant has to do this in an utterly kludgy way--by parsing class files! Not only
+is this slow and has some weird side-effects, it's still not completely
+reliable: Only the compiler really knows what files depend on what others.
+(For example, if it in-lines a constant, this may not be evident in the class
+file.) However, as far as I know, gcc is the only Java compiler that can
+output correct dependencies (jikes claims to do it, but is broken). Even if
+your compiler does output dependencies, you can't easily use them with Ant,
+because it stores its dependencies in a non-standard format.
+
+Another regression is that in Ant, individual source and class files are not
+first-class objects to the build system. You can't easily depend on, or ask to
+rebuild, a single class file. It's all or nothing. This too is largely due to
+compiler deficiencies: There is no way to tell most compilers to compile only
+the given sources; they insist upon compiling everything they think is
+out-of-date (again, gcc is an exception). This misfeature takes control out of
+the build system's hands, with the result that "recompile everything that's
+out-of-date" is the only feasible approach. Another effect is that parallel
+and distributed builds cannot be done reliably.
+
+Not to mention,
+
+    The organic growth and dynamic flexibility shows how close Java can be to
+    Lisp.
+
+I don't even know where to start on that one. All Ant shows is that if you
+give people a half-working workaround for broken tools, they'll flock to it.
+
+ - http://slashdot.org/comments.pl?sid=34220&cid=3702950
+#
+There's another factor besides effort that dictates how often you build: as
+project complexity increases, build times lengthen, even as you throw more
+hardware at them. At some point, you have to struggle just to do a nightly
+build.
+
+Mike Gunderloy
+Friday, November 16, 2001
+
+ - http://discuss.fogcreek.com/joelonsoftware/default.asp?cmd=show&ixPost=862
+#
+A crucial observation here is that you have to run through the loop again and
+again to write a program, and so it follows that the faster the
+Edit-Compile-Test loop, the more productive you will be, down to a natural
+limit of instantaneous compiles.
+ - Joel on Software "Daily Builds Are Your Friend"
+ - http://www.joelonsoftware.com/articles/fog0000000023.html

@@ -1,0 +1,33 @@
+<h2>tup-mode for emacs</h2>
+<a href="https://github.com/ejmr/tup-mode">Tup Mode</a> is a major mode for Emacs made for editing Tupfiles. It provides syntax highlighting for Tupfiles, and has key bindings for the most commonly used tup commands.
+<p>Created by Eric James Michael Ritz.</p>
+
+<h2>emacs compile command</h2>
+<p>The following horrible snippet seems to work for tup, while still
+being compatible with make. It can be put in an .emacs (place the cursor at the end and press C-x C-e to evaluate it without leaving emacs (Usually: M = Alt, C = Ctrl))</p>
+
+<pre class="code">(setq compilation-directory-matcher
+  '("\\(?:\\(?:Entering\\|Leavin\\(g\\)\\) directory
+`\\(.+\\)'$\\)\\|\\(?:[^]^[]*\\][[:space:]]*\\(\\(?:[[:alnum:]]*/\\)+\\)\\)\\|\\(?:^\\(\\[\\)\\)"
+(2 . 1) (3 . 9) (4 . 4)))
+</pre>
+
+<p>To try it out type:</p>
+
+<pre class="code">M-x compile [enter] cd /top/level/of/project/with/errors/ ; tup upd [enter]
+</pre>
+
+<p>And for handling colors in emacs:</p>
+<pre class="code">(require 'ansi-color)
+(defun colorize-compilation-buffer ()
+  (toggle-read-only)
+  (ansi-color-apply-on-region (point-min) (point-max))
+  (toggle-read-only))
+(add-hook 'compilation-filter-hook 'colorize-compilation-buffer)
+</pre>
+<p>Sent in by Sigurd Meldgaard.</p>
+
+<h2>fuse and gvfs</h2>
+<p>Tup uses a temporary fuse filesystem to watch the files accessed by sub-programs. The GNOME virtual filesystem, gvfs, may see this filesystem and attempt to access it to display an icon on the desktop. If you want to remove this icon, you may try disabling this feature by setting the following Nautilus property:</p>
+<pre><span class="prompt">$</span> gconftool-2 --type bool --set /apps/nautilus/desktop/volumes_visible 'false'</pre>
+<p>This will disable all "mounted folders". Unfortunately this is all-or-nothing solution. You'll not see any mounted folders (including ones from /media).</p>

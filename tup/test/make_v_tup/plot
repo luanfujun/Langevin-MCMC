@@ -1,0 +1,14 @@
+#! /bin/sh
+if [ $# -lt 1 ]; then 
+	echo "Usage: $0 plot_type" 1>&2;
+	exit 1;
+fi
+if [ $# -lt 2 ]; then
+	title="make"
+else
+	title=$2
+fi
+export GDFONTPATH=/usr/share/fonts/ttf-bitstream-vera
+
+# Set rmargin because gnuplot cuts off the label for 100000 in make_vs_tup
+(echo "set logscale"; echo "set xlabel \"# files\""; echo "set ylabel \"time(s)\""; echo "set key top left"; echo "set rmargin 5"; echo "set term png font \"Vera,9\" size 420,300"; echo "plot \"$1\" using 1:2 title '$title' with linespoints, \"$1\" using 1:3 title 'tup' with linespoints") | gnuplot -persist

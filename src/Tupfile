@@ -1,0 +1,25 @@
+# Change the following to your own path
+# Eigen 3.3-beta1
+EIGEN_INCLUDE   = -I/usr/include/eigen3
+# OIIO 1.7
+OIIO_INCLUDE    = -I../oiio/dist/linux64/include
+OIIO_LIB        = -L../oiio/dist/linux64/lib
+# EMBREE 3.6.1
+EMBREE_INCLUDE  = -I../embree3/include
+EMBREE_LIB      = -L../embree3/lib
+TBB_LIB         = -L/usr/lib
+# NANO FLANN library 
+NANOFLANN_INCLUDE = -I../nanoflann/include
+
+CC              = gcc
+CXX             = g++
+INCLUDES        = $(EIGEN_INCLUDE) $(OIIO_INCLUDE) $(EMBREE_INCLUDE) $(NANOFLANN_INCLUDE)
+CXXFLAGS        = -march=native -std=c++11 -Ofast -Wall -fopenmp -DSINGLE_PRECISION -w  
+LIBDIRS         = $(OIIO_LIB) $(EMBREE_LIB) $(TBB_LIB) 
+LIBS            = $(LIBDIRS) -lOpenImageIO -lembree3 -lz -lpthread -lboost_system -ldl -ltbb 
+
+: foreach *.cpp |> $(CXX) $(CXXFLAGS) $(INCLUDES) -c %f -o %o |> objs/%B.o
+: objs/*.o |> $(CXX) $(CXXFLAGS) %f $(LIBS) -o %o |> bin/dpt
+# use below to chroot (for debug symbols)
+#: foreach *.cpp |> ^c^ $(CXX) $(CXXFLAGS) $(INCLUDES) -c %f -o %o |> objs/%B.o
+#: objs/*.o |> ^c^ $(CXX) $(CXXFLAGS) %f $(LIBS) -o %o |> bin/dpt

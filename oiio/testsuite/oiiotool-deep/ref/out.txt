@@ -1,0 +1,26 @@
+Comparing "flat.exr" and "ref/flat.exr"
+PASS
+Comparing "ch.exr" and "ref/ch.exr"
+PASS
+Comparing "deepen.exr" and "ref/deepen.exr"
+PASS
+Comparing "crop1.exr" and "ref/crop1.exr"
+PASS
+Comparing "crop2.exr" and "ref/crop2.exr"
+PASS
+Comparing "trim1.exr" and "ref/trim1.exr"
+PASS
+Comparing "trim2.exr" and "ref/trim2.exr"
+PASS
+Comparing "deep_addc.exr" and "ref/deep_addc.exr"
+PASS
+Comparing "deep_subc.exr" and "ref/deep_subc.exr"
+PASS
+Comparing "deep_mulc.exr" and "ref/deep_mulc.exr"
+PASS
+Comparing "deep_divc.exr" and "ref/deep_divc.exr"
+PASS
+Comparing "deepmerge.exr" and "ref/deepmerge.exr"
+PASS
+Comparing "resampled-balls.exr" and "ref/resampled-balls.exr"
+PASS

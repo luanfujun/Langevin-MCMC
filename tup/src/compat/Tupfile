@@ -1,0 +1,48 @@
+include_rules
+
+# Changes here need to be reflected in the build.sh file
+ifeq ($(TARGET),linux)
+	srcs += utimensat_linux.c
+	srcs += dummy.c
+endif
+
+ifeq ($(TARGET),freebsd)
+	srcs += utimensat_linux.c
+	srcs += dummy.c
+	srcs += clearenv.c
+endif
+
+ifeq ($(TARGET),macosx)
+srcs += clearenv.c
+srcs += dir_mutex.c
+
+srcs += faccessat.c
+srcs += fchmodat.c
+srcs += fchownat.c
+srcs += fdopendir.c
+srcs += fstatat.c
+srcs += mkdirat.c
+srcs += openat.c
+srcs += readlinkat.c
+srcs += renameat.c
+srcs += symlinkat.c
+srcs += unlinkat.c
+srcs += utimensat.c
+
+endif
+
+ifeq ($(TARGET),solaris)
+srcs += dir_mutex.c
+srcs += mkdirat.c
+srcs += readlinkat.c
+endif
+
+ifeq ($(TARGET),win32)
+srcs += dir_mutex.c
+srcs += fstatat.c
+srcs += mkdirat.c
+srcs += openat.c
+srcs += renameat.c
+srcs += unlinkat.c
+endif
+: foreach $(srcs) |> !cc |>

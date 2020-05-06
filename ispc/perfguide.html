@@ -1,0 +1,766 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+<meta name="generator" content="Docutils 0.12: http://docutils.sourceforge.net/" />
+<title>Intel® SPMD Program Compiler Performance Guide</title>
+<script type="text/javascript">
+
+  var _gaq = _gaq || [];
+  _gaq.push(['_setAccount', 'UA-1486404-4']);
+  _gaq.push(['_trackPageview']);
+
+  (function() {
+    var ga = document.createElement('script'); ga.type = 'text/javascript'; ga.async = true;
+    ga.src = ('https:' == document.location.protocol ? 'https://ssl' : 'http://www') + '.google-analytics.com/ga.js';
+    var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(ga, s);
+  })();
+
+</script>
+<link rel="stylesheet" href="css/style.css" type="text/css" />
+</head>
+<body>
+<div class="document" id="intel-spmd-program-compiler-performance-guide">
+<div id="wrap">
+  <div id="wrap2">
+    <div id="header">
+      <h1 id="logo">Intel SPMD Program Compiler</h1>
+      <div id="slogan">An open-source compiler for high-performance SIMD programming on
+      the CPU</div>
+    </div>
+    <div id="nav">
+      <div id="nbar">
+        <ul>
+          <li><a href="index.html">Overview</a></li>
+          <li><a href="news.html">News</a></li>
+          <li><a href="features.html">Features</a></li>
+          <li><a href="downloads.html">Downloads</a></li>
+          <li id="selected"><a href="documentation.html">Documentation</a></li>
+          <li><a href="perf.html">Performance</a></li>
+          <li><a href="contrib.html">Contributors</a></li>
+        </ul>
+      </div>
+    </div>
+    <div id="content-wrap">
+      <div id="sidebar">
+          <div class="widgetspace">
+            <h1>Resources</h1>
+            <ul class="menu">
+              <li><a href="http://github.com/ispc/ispc/">ispc page on github</a></li>
+              <li><a href="http://groups.google.com/group/ispc-users/">ispc
+              users mailing list</a></li>
+              <li><a href="http://groups.google.com/group/ispc-dev/">ispc
+              developers mailing list</a></li>
+              <li><a href="http://github.com/ispc/ispc/wiki/">Wiki</a></li>
+              <li><a href="http://github.com/ispc/ispc/issues/">Bug tracking</a></li>
+              <li><a href="doxygen/index.html">Doxygen</a></li>
+            </ul>
+        </div>
+      </div>
+<h1 class="title">Intel® SPMD Program Compiler Performance Guide</h1>
+
+<div id="content">
+<p>The SPMD programming model provided by <tt class="docutils literal">ispc</tt> naturally delivers
+excellent performance for many workloads thanks to efficient use of CPU
+SIMD vector hardware.  This guide provides more details about how to get
+the most out of <tt class="docutils literal">ispc</tt> in practice.</p>
+<ul class="simple">
+<li><a class="reference internal" href="#key-concepts">Key Concepts</a><ul>
+<li><a class="reference internal" href="#efficient-iteration-with-foreach">Efficient Iteration With &quot;foreach&quot;</a></li>
+<li><a class="reference internal" href="#improving-control-flow-coherence-with-foreach-tiled">Improving Control Flow Coherence With &quot;foreach_tiled&quot;</a></li>
+<li><a class="reference internal" href="#using-coherent-control-flow-constructs">Using Coherent Control Flow Constructs</a></li>
+<li><a class="reference internal" href="#use-uniform-whenever-appropriate">Use &quot;uniform&quot; Whenever Appropriate</a></li>
+<li><a class="reference internal" href="#use-structure-of-arrays-layout-when-possible">Use &quot;Structure of Arrays&quot; Layout When Possible</a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#tips-and-techniques">Tips and Techniques</a><ul>
+<li><a class="reference internal" href="#understanding-gather-and-scatter">Understanding Gather and Scatter</a></li>
+<li><a class="reference internal" href="#avoid-64-bit-addressing-calculations-when-possible">Avoid 64-bit Addressing Calculations When Possible</a></li>
+<li><a class="reference internal" href="#avoid-computation-with-8-and-16-bit-integer-types">Avoid Computation With 8 and 16-bit Integer Types</a></li>
+<li><a class="reference internal" href="#implementing-reductions-efficiently">Implementing Reductions Efficiently</a></li>
+<li><a class="reference internal" href="#using-foreach-active-effectively">Using &quot;foreach_active&quot; Effectively</a></li>
+<li><a class="reference internal" href="#using-low-level-vector-tricks">Using Low-level Vector Tricks</a></li>
+<li><a class="reference internal" href="#the-fast-math-option">The &quot;Fast math&quot; Option</a></li>
+<li><a class="reference internal" href="#inline-aggressively">&quot;inline&quot; Aggressively</a></li>
+<li><a class="reference internal" href="#avoid-the-system-math-library">Avoid The System Math Library</a></li>
+<li><a class="reference internal" href="#declare-variables-in-the-scope-where-they-re-used">Declare Variables In The Scope Where They're Used</a></li>
+<li><a class="reference internal" href="#instrumenting-ispc-programs-to-understand-runtime-behavior">Instrumenting ISPC Programs To Understand Runtime Behavior</a></li>
+<li><a class="reference internal" href="#choosing-a-target-vector-width">Choosing A Target Vector Width</a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#disclaimer-and-legal-information">Disclaimer and Legal Information</a></li>
+<li><a class="reference internal" href="#optimization-notice">Optimization Notice</a></li>
+</ul>
+<div class="section" id="key-concepts">
+<h1>Key Concepts</h1>
+<p>This section describes the four most important concepts to understand and
+keep in mind when writing high-performance <tt class="docutils literal">ispc</tt> programs.  It assumes
+good familiarity with the topics covered in the <tt class="docutils literal">ispc</tt> <a class="reference external" href="ispc.html">Users Guide</a>.</p>
+<div class="section" id="efficient-iteration-with-foreach">
+<h2>Efficient Iteration With &quot;foreach&quot;</h2>
+<p>The <tt class="docutils literal">foreach</tt> parallel iteration construct is semantically equivalent to
+a regular <tt class="docutils literal">for()</tt> loop, though it offers meaningful performance benefits.
+(See the <a class="reference external" href="ispc.html#parallel-iteration-statements-foreach-and-foreach-tiled">documentation on &quot;foreach&quot; in the Users Guide</a> for a review of
+its syntax and semantics.)  As an example, consider this simple function
+that iterates over some number of elements in an array, doing computation
+on each one:</p>
+<pre class="literal-block">
+export void foo(uniform int a[], uniform int count) {
+    for (int i = programIndex; i &lt; count; i += programCount) {
+        // do some computation on a[i]
+    }
+}
+</pre>
+<p>Depending on the specifics of the computation being performed, the code
+generated for this function could likely be improved by modifying the code
+so that the loop only goes as far through the data as is possible to pack
+an entire gang of program instances with computation each time through the
+loop.  Doing so enables the <tt class="docutils literal">ispc</tt> compiler to generate more efficient
+code for cases where it knows that the execution mask is &quot;all on&quot;.  Then,
+an <tt class="docutils literal">if</tt> statement at the end handles processing the ragged extra bits of
+data that didn't fully fill a gang.</p>
+<pre class="literal-block">
+export void foo(uniform int a[], uniform int count) {
+    // First, just loop up to the point where all program instances
+    // in the gang will be active at the loop iteration start
+    uniform int countBase = count &amp; ~(programCount-1);
+    for (uniform int i = 0; i &lt; countBase; i += programCount) {
+        int index = i + programIndex;
+        // do some computation on a[index]
+    }
+    // Now handle the ragged extra bits at the end
+    if (countBase &lt; count) {
+        int index = countBase + programIndex;
+        // do some computation on a[index]
+    }
+}
+</pre>
+<p>While the performance of the above code will likely be better than the
+first version of the function, the loop body code has been duplicated (or
+has been forced to move into a separate utility function).</p>
+<p>Using the <tt class="docutils literal">foreach</tt> looping construct as below provides all of the
+performance benefits of the second version of this function, with the
+compactness of the first.</p>
+<pre class="literal-block">
+export void foo(uniform int a[], uniform int count) {
+    foreach (i = 0 ... count) {
+        // do some computation on a[i]
+    }
+}
+</pre>
+</div>
+<div class="section" id="improving-control-flow-coherence-with-foreach-tiled">
+<h2>Improving Control Flow Coherence With &quot;foreach_tiled&quot;</h2>
+<p>Depending on the computation being performed, <tt class="docutils literal">foreach_tiled</tt> may give
+better performance than <tt class="docutils literal">foreach</tt>.  (See the <a class="reference external" href="ispc.html#parallel-iteration-statements-foreach-and-foreach-tiled">documentation in the Users
+Guide</a> for the syntax and semantics of <tt class="docutils literal">foreach_tiled</tt>.)  Given a
+multi-dimensional iteration like:</p>
+<pre class="literal-block">
+foreach (i = 0 ... width, j = 0 ... height) {
+    // do computation on element (i,j)
+}
+</pre>
+<p>if the <tt class="docutils literal">foreach</tt> statement is used, elements in the gang of program
+instances will be mapped to values of <tt class="docutils literal">i</tt> and <tt class="docutils literal">j</tt> by taking spans of
+<tt class="docutils literal">programCount</tt> elements across <tt class="docutils literal">i</tt> with a single value of <tt class="docutils literal">j</tt>.  For
+example, the <tt class="docutils literal">foreach</tt> statement above roughly corresponds to:</p>
+<pre class="literal-block">
+for (uniform int j = 0; j &lt; height; ++j)
+    for (int i = 0; i &lt; width; i += programCount) {
+        // do computation
+}
+</pre>
+<p>When a multi-dimensional domain is being iterated over, <tt class="docutils literal">foreach_tiled</tt>
+statement maps program instances to data in a way that tries to select
+square n-dimensional segments of the domain.  For example, on a compilation
+target with 8-wide gangs of program instances, it generates code that
+iterates over the domain the same way as the following code (though more
+efficiently):</p>
+<pre class="literal-block">
+for (int j = programIndex/4; j &lt; height; j += 2)
+    for (int i = programIndex%4; i &lt; width; i += 4) {
+        // do computation
+}
+</pre>
+<p>Thus, each gang of program instances operates on a 2x4 tile of the domain.
+With higher-dimensional iteration and different gang sizes, a similar
+mapping is performed--e.g. for 2D iteration with a 16-wide gang size, 4x4
+tiles are iterated over; for 4D iteration with a 8-gang, 1x2x2x2 tiles are
+processed, and so forth.</p>
+<p>Performance benefit can come from using <tt class="docutils literal">foreach_tiled</tt> in that it
+essentially optimizes for the benefit of iterating over <em>compact</em> regions
+of the domain (while <tt class="docutils literal">foreach</tt> iterates over the domain in a way that
+generally allows linear memory access.)  There are two benefits from
+processing compact regions of the domain.</p>
+<p>First, it's often the case that the control flow coherence of the program
+instances in the gang is improved; if data-dependent control flow decisions
+are related to the values of the data in the domain being processed, and if
+the data values have some coherence, iterating with compact regions will
+improve control flow coherence.</p>
+<p>Second, processing compact regions may mean that the data accessed by
+program instances in the gang is be more coherent, leading to performance
+benefits from better cache hit rates.</p>
+<p>As a concrete example, for the ray tracer example in the <tt class="docutils literal">ispc</tt>
+distribution (in the <tt class="docutils literal">examples/rt</tt> directory), performance is 20% better
+when the pixels are iterated over using <tt class="docutils literal">foreach_tiled</tt> than <tt class="docutils literal">foreach</tt>,
+because more coherent regions of the scene are accessed by the set of rays
+in the gang of program instances.</p>
+</div>
+<div class="section" id="using-coherent-control-flow-constructs">
+<h2>Using Coherent Control Flow Constructs</h2>
+<p>Recall from the <tt class="docutils literal">ispc</tt> Users Guide, in the <a class="reference external" href="ispc.html#the-spmd-on-simd-execution-model">SPMD-on-SIMD Execution Model
+section</a> that <tt class="docutils literal">if</tt> statements with a <tt class="docutils literal">uniform</tt> test compile to more
+efficient code than <tt class="docutils literal">if</tt> tests with varying tests.  The coherent <tt class="docutils literal">cif</tt>
+statement can provide many benefits of <tt class="docutils literal">if</tt> with a uniform test in the
+case where the test is actually varying.</p>
+<p>In this case, the code the compiler generates for the <tt class="docutils literal">if</tt>
+test is along the lines of the following pseudo-code:</p>
+<pre class="literal-block">
+bool expr = /* evaluate cif condition */
+if (all(expr)) {
+    // run &quot;true&quot; case of if test only
+} else if (!any(expr)) {
+    // run &quot;false&quot; case of if test only
+} else {
+    // run both true and false cases, updating mask appropriately
+}
+</pre>
+<p>For <tt class="docutils literal">if</tt> statements where the different running SPMD program instances
+don't have coherent values for the boolean <tt class="docutils literal">if</tt> test, using <tt class="docutils literal">cif</tt>
+introduces some additional overhead from the <tt class="docutils literal">all</tt> and <tt class="docutils literal">any</tt> tests as
+well as the corresponding branches.  For cases where the program
+instances often do compute the same boolean value, this overhead is
+worthwhile.  If the control flow is in fact usually incoherent, this
+overhead only costs performance.</p>
+<p>In a similar fashion, <tt class="docutils literal">ispc</tt> provides <tt class="docutils literal">cfor</tt>, <tt class="docutils literal">cwhile</tt>, and <tt class="docutils literal">cdo</tt>
+statements.  These statements are semantically the same as the
+corresponding non-&quot;c&quot;-prefixed functions.</p>
+</div>
+<div class="section" id="use-uniform-whenever-appropriate">
+<h2>Use &quot;uniform&quot; Whenever Appropriate</h2>
+<p>For any variable that will always have the same value across all of the
+program instances in a gang, declare the variable with the  <tt class="docutils literal">uniform</tt>
+qualifier.  Doing so enables the <tt class="docutils literal">ispc</tt> compiler to emit better code in
+many different ways.</p>
+<p>As a simple example, consider a <tt class="docutils literal">for</tt> loop that always does the same
+number of iterations:</p>
+<pre class="literal-block">
+for (int i = 0; i &lt; 10; ++i)
+    // do something ten times
+</pre>
+<p>If this is written with <tt class="docutils literal">i</tt> as a <tt class="docutils literal">varying</tt> variable, as above, there's
+additional overhead in the code generated for the loop as the compiler
+emits instructions to handle the possibility of not all program instances
+following the same control flow path (as might be the case if the loop
+limit, 10, was itself a <tt class="docutils literal">varying</tt> value.)</p>
+<p>If the above loop is instead written with <tt class="docutils literal">i</tt> <tt class="docutils literal">uniform</tt>, as:</p>
+<pre class="literal-block">
+for (uniform int i = 0; i &lt; 10; ++i)
+    // do something ten times
+</pre>
+<p>Then better code can be generated (and the loop possibly unrolled).</p>
+<p>In some cases, the compiler may be able to detect simple cases like these,
+but it's always best to provide the compiler with as much help as possible
+to understand the actual form of your computation.</p>
+</div>
+<div class="section" id="use-structure-of-arrays-layout-when-possible">
+<h2>Use &quot;Structure of Arrays&quot; Layout When Possible</h2>
+<p>In general, memory access performance (for both reads and writes) is best
+when the running program instances access a contiguous region of memory; in
+this case efficient vector load and store instructions can often be used
+rather than gathers and scatters.  As an example of this issue, consider an
+array of a simple point datatype laid out and accessed in conventional
+&quot;array of structures&quot; (AOS) layout:</p>
+<pre class="literal-block">
+struct Point { float x, y, z; };
+uniform Point pts[...];
+float v = pts[programIndex].x;
+</pre>
+<p>In the above code, the access to <tt class="docutils literal"><span class="pre">pts[programIndex].x</span></tt> accesses
+non-sequential memory locations, due to the <tt class="docutils literal">y</tt> and <tt class="docutils literal">z</tt> values between
+the desired <tt class="docutils literal">x</tt> values in memory.  A &quot;gather&quot; is required to get the
+value of <tt class="docutils literal">v</tt>, with a corresponding decrease in performance.</p>
+<p>If <tt class="docutils literal">Point</tt> was defined as a &quot;structure of arrays&quot; (SOA) type, the access
+can be much more efficient:</p>
+<pre class="literal-block">
+struct Point8 { float x[8], y[8], z[8]; };
+uniform Point8 pts8[...];
+int majorIndex = programIndex / 8;
+int minorIndex = programIndex % 8;
+float v = pts8[majorIndex].x[minorIndex];
+</pre>
+<p>In this case, each <tt class="docutils literal">Point8</tt> has 8 <tt class="docutils literal">x</tt> values contiguous in memory
+before 8 <tt class="docutils literal">y</tt> values and then 8 <tt class="docutils literal">z</tt> values.  If the gang size is 8 or
+less, the access for <tt class="docutils literal">v</tt> will have the same value of <tt class="docutils literal">majorIndex</tt> for
+all program instances and will access consecutive elements of the <tt class="docutils literal">x[8]</tt>
+array with a vector load.  (For larger gang sizes, two 8-wide vector loads
+would be issues, which is also quite efficient.)</p>
+<p>However, the syntax in the above code is messy; accessing SOA data in this
+fashion is much less elegant than the corresponding code for accessing the
+data with AOS layout.  The <tt class="docutils literal">soa</tt> qualifier in <tt class="docutils literal">ispc</tt> can be used to
+cause the corresponding transformation to be made to the <tt class="docutils literal">Point</tt> type,
+while preserving the clean syntax for data access that comes with AOS
+layout:</p>
+<pre class="literal-block">
+soa&lt;8&gt; Point pts[...];
+float v = pts[programIndex].x;
+</pre>
+<p>Thanks to having SOA layout a first-class concept in the language's type
+system, it's easy to write functions that convert data between the
+layouts.  For example, the <tt class="docutils literal">aos_to_soa</tt> function below converts <tt class="docutils literal">count</tt>
+elements of the given <tt class="docutils literal">Point</tt> type from AOS to 8-wide SOA layout.  (It
+assumes that the caller has pre-allocated sufficient space in the
+<tt class="docutils literal">pts_soa</tt> output array.</p>
+<pre class="literal-block">
+void aos_to_soa(uniform Point pts_aos[], uniform int count,
+                soa&lt;8&gt; pts_soa[]) {
+     foreach (i = 0 ... count)
+         pts_soa[i] = pts_aos[i];
+}
+</pre>
+<p>Analogously, a function could be written to convert back from SOA to AOS if
+needed.</p>
+</div>
+</div>
+<div class="section" id="tips-and-techniques">
+<h1>Tips and Techniques</h1>
+<p>This section introduces a number of additional techniques that are worth
+keeping in mind when writing <tt class="docutils literal">ispc</tt> programs.</p>
+<div class="section" id="understanding-gather-and-scatter">
+<h2>Understanding Gather and Scatter</h2>
+<p>Memory reads and writes from the program instances in a gang that access
+irregular memory locations (rather than a consecutive set of locations, or
+a single location) can be relatively inefficient.  As an example, consider
+the &quot;simple&quot; array indexing calculation below:</p>
+<pre class="literal-block">
+int i = ....;
+uniform float x[10] = { ... };
+float f = x[i];
+</pre>
+<p>Since the index <tt class="docutils literal">i</tt> is a varying value, the program instances in the gang
+will in general be reading different locations in the array <tt class="docutils literal">x</tt>.  Because
+current CPUs have a &quot;gather&quot; instruction, the <tt class="docutils literal">ispc</tt> compiler has to
+serialize these memory reads, performing a separate memory load for each
+running program instance, packing the result into <tt class="docutils literal">f</tt>.  (The analogous
+case happens for a write into <tt class="docutils literal">x[i]</tt>.)</p>
+<p>In many cases, gathers like these are unavoidable; the program instances
+just need to access incoherent memory locations.  However, if the array
+index <tt class="docutils literal">i</tt> actually has the same value for all of the program instances or
+if it represents an access to a consecutive set of array locations, much
+more efficient load and store instructions can be generated instead of
+gathers and scatters, respectively.</p>
+<p>In many cases, the <tt class="docutils literal">ispc</tt> compiler is able to deduce that the memory
+locations accessed by a varying index are either all the same or are
+uniform.  For example, given:</p>
+<pre class="literal-block">
+uniform int x = ...;
+int y = x;
+return array[y];
+</pre>
+<p>The compiler is able to determine that all of the program instances are
+loading from the same location, even though <tt class="docutils literal">y</tt> is not a <tt class="docutils literal">uniform</tt>
+variable.  In this case, the compiler will transform this load to a regular
+vector load, rather than a general gather.</p>
+<p>Sometimes the running program instances will access a linear sequence of
+memory locations; this happens most frequently when array indexing is done
+based on the built-in <tt class="docutils literal">programIndex</tt> variable.  In many of these cases,
+the compiler is also able to detect this case and then do a vector load.
+For example, given:</p>
+<pre class="literal-block">
+for (int i = programIndex; i &lt; count; i += programCount)
+  // process array[i];
+</pre>
+<p>Regular vector loads and stores are issued for accesses to <tt class="docutils literal">array[i]</tt>.</p>
+<p>Both of these cases have been ones where the compiler is able to determine
+statically that the index has the same value at compile-time.  It's
+often the case that this determination can't be made at compile time, but
+this is often the case at run time.  The <tt class="docutils literal">reduce_equal()</tt> function from
+the standard library can be used in this case; it checks to see if the
+given value is the same across over all of the running program instances,
+returning true and its <tt class="docutils literal">uniform</tt> value if so.</p>
+<p>The following function shows the use of <tt class="docutils literal">reduce_equal()</tt> to check for an
+equal index at execution time and then either do a scalar load and
+broadcast or a general gather.</p>
+<pre class="literal-block">
+uniform float array[..] = { ... };
+float value;
+int i = ...;
+uniform int ui;
+if (reduce_equal(i, &amp;ui) == true)
+    value = array[ui]; // scalar load + broadcast
+else
+    value = array[i];  // gather
+</pre>
+<p>For a simple case like the one above, the overhead of doing the
+<tt class="docutils literal">reduce_equal()</tt> check is likely not worthwhile compared to just always
+doing a gather.  In more complex cases, where a number of accesses are done
+based on the index, it can be worth doing.  See the example
+<tt class="docutils literal">examples/volume_rendering</tt> in the <tt class="docutils literal">ispc</tt> distribution for the use of
+this technique in an instance where it is beneficial to performance.</p>
+</div>
+<div class="section" id="understanding-memory-read-coalescing">
+<h2>Understanding Memory Read Coalescing</h2>
+<p>XXXX todo</p>
+</div>
+<div class="section" id="avoid-64-bit-addressing-calculations-when-possible">
+<h2>Avoid 64-bit Addressing Calculations When Possible</h2>
+<p>Even when compiling to a 64-bit architecture target, <tt class="docutils literal">ispc</tt> does many of
+the addressing calculations in 32-bit precision by default--this behavior
+can be overridden with the <tt class="docutils literal"><span class="pre">--addressing=64</span></tt> command-line argument.  This
+option should only be used if it's necessary to be able to address over 4GB
+of memory in the <tt class="docutils literal">ispc</tt> code, as it essentially doubles the cost of
+memory addressing calculations in the generated code.</p>
+</div>
+<div class="section" id="avoid-computation-with-8-and-16-bit-integer-types">
+<h2>Avoid Computation With 8 and 16-bit Integer Types</h2>
+<p>The code generated for 8 and 16-bit integer types is generally not as
+efficient as the code generated for 32-bit integer types.  It is generally
+worthwhile to use 32-bit integer types for intermediate computations, even
+if the final result will be stored in a smaller integer type.</p>
+</div>
+<div class="section" id="implementing-reductions-efficiently">
+<h2>Implementing Reductions Efficiently</h2>
+<p>It's often necessary to compute a reduction over a data set--for example,
+one might want to add all of the values in an array, compute their minimum,
+etc.  <tt class="docutils literal">ispc</tt> provides a few capabilities that make it easy to efficiently
+compute reductions like these.  However, it's important to use these
+capabilities appropriately for best results.</p>
+<p>As an example, consider the task of computing the sum of all of the values
+in an array.  In C code, we might have:</p>
+<pre class="literal-block">
+/* C implementation of a sum reduction */
+float sum(const float array[], int count) {
+    float sum = 0;
+    for (int i = 0; i &lt; count; ++i)
+        sum += array[i];
+    return sum;
+}
+</pre>
+<p>Exactly this computation could also be expressed as a purely uniform
+computation in <tt class="docutils literal">ispc</tt>, though without any benefit from vectorization:</p>
+<pre class="literal-block">
+/* inefficient ispc implementation of a sum reduction */
+uniform float sum(const uniform float array[], uniform int count) {
+    uniform float sum = 0;
+    for (uniform int i = 0; i &lt; count; ++i)
+        sum += array[i];
+    return sum;
+}
+</pre>
+<p>As a first try, one might try using the <tt class="docutils literal">reduce_add()</tt> function from the
+<tt class="docutils literal">ispc</tt> standard library; it takes a <tt class="docutils literal">varying</tt> value and returns the sum
+of that value across all of the active program instances.</p>
+<pre class="literal-block">
+/* inefficient ispc implementation of a sum reduction */
+uniform float sum(const uniform float array[], uniform int count) {
+    uniform float sum = 0;
+    foreach (i = 0 ... count)
+        sum += reduce_add(array[i]);
+    return sum;
+}
+</pre>
+<p>This implementation loads a gang's worth of values from the array, one for
+each of the program instances, and then uses <tt class="docutils literal">reduce_add()</tt> to reduce
+across the program instances and then update the sum.  Unfortunately this
+approach loses most benefit from vectorization, as it does more work on the
+cross-program instance <tt class="docutils literal">reduce_add()</tt> call than it saves from the vector
+load of values.</p>
+<p>The most efficient approach is to do the reduction in two phases: rather
+than using a <tt class="docutils literal">uniform</tt> variable to store the sum, we maintain a varying
+value, such that each program instance is effectively computing a local
+partial sum on the subset of array values that it has loaded from the
+array.  When the loop over array elements concludes, a single call to
+<tt class="docutils literal">reduce_add()</tt> computes the final reduction across each of the program
+instances' elements of <tt class="docutils literal">sum</tt>.  This approach effectively compiles to a
+single vector load and a single vector add for each loop iteration's of
+values--very efficient code in the end.</p>
+<pre class="literal-block">
+/* good ispc implementation of a sum reduction */
+uniform float sum(const uniform float array[], uniform int count) {
+    float sum = 0;
+    foreach (i = 0 ... count)
+        sum += array[i];
+    return reduce_add(sum);
+}
+</pre>
+</div>
+<div class="section" id="using-foreach-active-effectively">
+<h2>Using &quot;foreach_active&quot; Effectively</h2>
+<p>For high-performance code,</p>
+<p>For example, consider this segment of code, from the introduction of
+<tt class="docutils literal">foreach_active</tt> in the ispc User's Guide:</p>
+<pre class="literal-block">
+uniform float array[...] = { ... };
+int index = ...;
+foreach_active (i) {
+    ++array[index];
+}
+</pre>
+<p>Here, <tt class="docutils literal">index</tt> was assumed to possibly have the same value for multiple
+program instances, so the updates to <tt class="docutils literal">array[index]</tt> are serialized by the
+<tt class="docutils literal">foreach_active</tt> statement in order to not have undefined results when
+<tt class="docutils literal">index</tt> values do collide.</p>
+<p>The code generated by the compiler can be improved  in this case by making
+it clear that only a single element of the array is accessed by
+<tt class="docutils literal">array[index]</tt> and that thus a general gather or scatter isn't required.
+Specifically, by using the <tt class="docutils literal">extract()</tt> function from the standard library
+to extract the current program instance's value of <tt class="docutils literal">index</tt> into a
+<tt class="docutils literal">uniform</tt> variable and then using that to index into <tt class="docutils literal">array</tt>, as below,
+more efficient code is generated.</p>
+<pre class="literal-block">
+foreach_active (instanceNum) {
+    uniform int unifIndex = extract(index, instanceNum);
+    ++array[unifIndex];
+}
+</pre>
+</div>
+<div class="section" id="using-low-level-vector-tricks">
+<h2>Using Low-level Vector Tricks</h2>
+<p>Many low-level Intel® SSE and AVX coding constructs can be implemented in
+<tt class="docutils literal">ispc</tt> code.  The <tt class="docutils literal">ispc</tt> standard library functions <tt class="docutils literal">intbits()</tt> and
+<tt class="docutils literal">floatbits()</tt> are often useful in this context.  Recall that
+<tt class="docutils literal">intbits()</tt> takes a <tt class="docutils literal">float</tt> value and returns it as an integer where
+the bits of the integer are the same as the bit representation in memory of
+the <tt class="docutils literal">float</tt>.  (In other words, it does <em>not</em> perform an integer to
+floating-point conversion.)  <tt class="docutils literal">floatbits()</tt>, then, performs the inverse
+computation.</p>
+<p>As an example of the use of these functions, the following code efficiently
+reverses the sign of the given values.</p>
+<pre class="literal-block">
+float flipsign(float a) {
+    unsigned int i = intbits(a);
+    i ^= 0x80000000;
+    return floatbits(i);
+}
+</pre>
+<p>This code compiles down to a single XOR instruction.</p>
+</div>
+<div class="section" id="the-fast-math-option">
+<h2>The &quot;Fast math&quot; Option</h2>
+<p><tt class="docutils literal">ispc</tt> has a <tt class="docutils literal"><span class="pre">--opt=fast-math</span></tt> command-line flag that enables a number of
+optimizations that may be undesirable in code where numerical precision is
+critically important.  For many graphics applications, for example, the
+approximations introduced may be acceptable, however.  The following two
+optimizations are performed when <tt class="docutils literal"><span class="pre">--opt=fast-math</span></tt> is used.  By default, the
+<tt class="docutils literal"><span class="pre">--opt=fast-math</span></tt> flag is off.</p>
+<ul class="simple">
+<li>Expressions like <tt class="docutils literal">x / y</tt>, where <tt class="docutils literal">y</tt> is a compile-time constant, are
+transformed to <tt class="docutils literal">x * <span class="pre">(1./y)</span></tt>, where the inverse value of <tt class="docutils literal">y</tt> is
+precomputed at compile time.</li>
+<li>Expressions like <tt class="docutils literal">x / y</tt>, where <tt class="docutils literal">y</tt> is not a compile-time constant,
+are transformed to <tt class="docutils literal">x * rcp(y)</tt>, where <tt class="docutils literal">rcp()</tt> maps to the
+approximate reciprocal instruction from the <tt class="docutils literal">ispc</tt> standard library.</li>
+</ul>
+</div>
+<div class="section" id="inline-aggressively">
+<h2>&quot;inline&quot; Aggressively</h2>
+<p>Inlining functions aggressively is generally beneficial for performance
+with <tt class="docutils literal">ispc</tt>.  Definitely use the <tt class="docutils literal">inline</tt> qualifier for any short
+functions (a few lines long), and experiment with it for longer functions.</p>
+</div>
+<div class="section" id="avoid-the-system-math-library">
+<h2>Avoid The System Math Library</h2>
+<p>The default math library for transcendentals and the like that <tt class="docutils literal">ispc</tt> has
+higher error than the system's math library, though is much more efficient
+due to being vectorized across the program instances and due to the fact
+that the functions can be inlined in the final code.  (It generally has
+errors in the range of 10ulps, while the system math library generally has
+no more than 1ulp of error for transcendentals.)</p>
+<p>If the <tt class="docutils literal"><span class="pre">--math-lib=system</span></tt> command-line option is used when compiling an
+<tt class="docutils literal">ispc</tt> program, then calls to the system math library will be generated
+instead.  This option should only be used if the higher precision is
+absolutely required as the performance impact of using it can be
+significant.</p>
+</div>
+<div class="section" id="declare-variables-in-the-scope-where-they-re-used">
+<h2>Declare Variables In The Scope Where They're Used</h2>
+<p>Performance is slightly improved by declaring variables at the same block
+scope where they are first used.  For example, in code like the
+following, if the lifetime of <tt class="docutils literal">foo</tt> is only within the scope of the
+<tt class="docutils literal">if</tt> clause, write the code like this:</p>
+<pre class="literal-block">
+float func() {
+    ....
+    if (x &lt; y) {
+        float foo;
+        ... use foo ...
+    }
+}
+</pre>
+<p>Try not to write code as:</p>
+<pre class="literal-block">
+float func() {
+    float foo;
+    ....
+    if (x &lt; y) {
+        ... use foo ...
+    }
+}
+</pre>
+<p>Doing so can reduce the amount of masked store instructions that the
+compiler needs to generate.</p>
+</div>
+<div class="section" id="instrumenting-ispc-programs-to-understand-runtime-behavior">
+<h2>Instrumenting ISPC Programs To Understand Runtime Behavior</h2>
+<p><tt class="docutils literal">ispc</tt> has an optional instrumentation feature that can help you
+understand performance issues.  If a program is compiled using the
+<tt class="docutils literal"><span class="pre">--instrument</span></tt> flag, the compiler emits calls to a function with the
+following signature at various points in the program (for
+example, at interesting points in the control flow, when scatters or
+gathers happen.)</p>
+<pre class="literal-block">
+extern &quot;C&quot; {
+    void ISPCInstrument(const char *fn, const char *note,
+                        int line, uint64_t mask);
+}
+</pre>
+<p>This function is passed the file name of the <tt class="docutils literal">ispc</tt> file running, a short
+note indicating what is happening, the line number in the source file, and
+the current mask of active program instances in the gang.  You must provide an
+implementation of this function and link it in with your application.</p>
+<p>For example, when the <tt class="docutils literal">ispc</tt> program runs, this function might be called
+as follows:</p>
+<pre class="literal-block">
+ISPCInstrument(&quot;foo.ispc&quot;, &quot;function entry&quot;, 55, 0xfull);
+</pre>
+<p>This call indicates that at the currently executing program has just
+entered the function defined at line 55 of the file <tt class="docutils literal">foo.ispc</tt>, with a
+mask of all lanes currently executing (assuming a four-wide gang size
+target machine).</p>
+<p>For a fuller example of the utility of this functionality, see
+<tt class="docutils literal">examples/aobench_instrumented</tt> in the <tt class="docutils literal">ispc</tt> distribution.  This
+example includes an implementation of the <tt class="docutils literal">ISPCInstrument()</tt> function
+that collects aggregate data about the program's execution behavior.</p>
+<p>When running this example, you will want to direct to the <tt class="docutils literal">ao</tt> executable
+to generate a low resolution image, because the instrumentation adds
+substantial execution overhead.  For example:</p>
+<pre class="literal-block">
+% ./ao 1 32 32
+</pre>
+<p>After the <tt class="docutils literal">ao</tt> program exits, a summary report along the following lines
+will be printed.  In the first few lines, you can see how many times a few
+functions were called, and the average percentage of SIMD lanes that were
+active upon function entry.</p>
+<pre class="literal-block">
+ao.ispc(0067) - function entry: 342424 calls (0 / 0.00% all off!), 95.86% active lanes
+ao.ispc(0067) - return: uniform control flow: 342424 calls (0 / 0.00% all off!), 95.86% active lanes
+ao.ispc(0071) - function entry: 1122 calls (0 / 0.00% all off!), 97.33% active lanes
+ao.ispc(0075) - return: uniform control flow: 1122 calls (0 / 0.00% all off!), 97.33% active lanes
+ao.ispc(0079) - function entry: 10072 calls (0 / 0.00% all off!), 45.09% active lanes
+ao.ispc(0088) - function entry: 36928 calls (0 / 0.00% all off!), 97.40% active lanes
+...
+</pre>
+</div>
+<div class="section" id="choosing-a-target-vector-width">
+<h2>Choosing A Target Vector Width</h2>
+<p>By default, <tt class="docutils literal">ispc</tt> compiles to the natural vector width of the target
+instruction set.  For example, for SSE2 and SSE4, it compiles four-wide,
+and for AVX, it complies 8-wide.  For some programs, higher performance may
+be seen if the program is compiled to a doubled vector width--8-wide for
+SSE and 16-wide for AVX.</p>
+<p>For workloads that don't require many of registers, this method can lead to
+significantly more efficient execution thanks to greater instruction level
+parallelism and amortization of various overhead over more program
+instances.  For other workloads, it may lead to a slowdown due to higher
+register pressure; trying both approaches for key kernels may be
+worthwhile.</p>
+<p>This option is only available for each of the SSE2, SSE4 and AVX targets.
+It is selected with the <tt class="docutils literal"><span class="pre">--target=sse2-x2</span></tt>, <tt class="docutils literal"><span class="pre">--target=sse4-x2</span></tt> and
+<tt class="docutils literal"><span class="pre">--target=avx-x2</span></tt> options, respectively.</p>
+</div>
+</div>
+<div class="section" id="disclaimer-and-legal-information">
+<h1>Disclaimer and Legal Information</h1>
+<p>INFORMATION IN THIS DOCUMENT IS PROVIDED IN CONNECTION WITH INTEL(R) PRODUCTS.
+NO LICENSE, EXPRESS OR IMPLIED, BY ESTOPPEL OR OTHERWISE, TO ANY INTELLECTUAL
+PROPERTY RIGHTS IS GRANTED BY THIS DOCUMENT. EXCEPT AS PROVIDED IN INTEL'S TERMS
+AND CONDITIONS OF SALE FOR SUCH PRODUCTS, INTEL ASSUMES NO LIABILITY WHATSOEVER,
+AND INTEL DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTY, RELATING TO SALE AND/OR USE
+OF INTEL PRODUCTS INCLUDING LIABILITY OR WARRANTIES RELATING TO FITNESS FOR A
+PARTICULAR PURPOSE, MERCHANTABILITY, OR INFRINGEMENT OF ANY PATENT, COPYRIGHT
+OR OTHER INTELLECTUAL PROPERTY RIGHT.</p>
+<p>UNLESS OTHERWISE AGREED IN WRITING BY INTEL, THE INTEL PRODUCTS ARE NOT DESIGNED
+NOR INTENDED FOR ANY APPLICATION IN WHICH THE FAILURE OF THE INTEL PRODUCT COULD
+CREATE A SITUATION WHERE PERSONAL INJURY OR DEATH MAY OCCUR.</p>
+<p>Intel may make changes to specifications and product descriptions at any time,
+without notice. Designers must not rely on the absence or characteristics of any
+features or instructions marked &quot;reserved&quot; or &quot;undefined.&quot; Intel reserves these
+for future definition and shall have no responsibility whatsoever for conflicts
+or incompatibilities arising from future changes to them. The information here
+is subject to change without notice. Do not finalize a design with this
+information.</p>
+<p>The products described in this document may contain design defects or errors
+known as errata which may cause the product to deviate from published
+specifications. Current characterized errata are available on request.</p>
+<p>Contact your local Intel sales office or your distributor to obtain the latest
+specifications and before placing your product order.</p>
+<p>Copies of documents which have an order number and are referenced in this
+document, or other Intel literature, may be obtained by calling 1-800-548-4725,
+or by visiting Intel's Web Site.</p>
+<p>Intel processor numbers are not a measure of performance. Processor numbers
+differentiate features within each processor family, not across different
+processor families. See <a class="reference external" href="http://www.intel.com/products/processor_number">http://www.intel.com/products/processor_number</a> for
+details.</p>
+<p>BunnyPeople, Celeron, Celeron Inside, Centrino, Centrino Atom,
+Centrino Atom Inside, Centrino Inside, Centrino logo, Core Inside, FlashFile,
+i960, InstantIP, Intel, Intel logo, Intel386, Intel486, IntelDX2, IntelDX4,
+IntelSX2, Intel Atom, Intel Atom Inside, Intel Core, Intel Inside,
+Intel Inside logo, Intel. Leap ahead., Intel. Leap ahead. logo, Intel NetBurst,
+Intel NetMerge, Intel NetStructure, Intel SingleDriver, Intel SpeedStep,
+Intel StrataFlash, Intel Viiv, Intel vPro, Intel XScale, Itanium,
+Itanium Inside, MCS, MMX, Oplus, OverDrive, PDCharm, Pentium, Pentium Inside,
+skoool, Sound Mark, The Journey Inside, Viiv Inside, vPro Inside, VTune, Xeon,
+and Xeon Inside are trademarks of Intel Corporation in the U.S. and other
+countries.</p>
+<ul class="simple">
+<li>Other names and brands may be claimed as the property of others.</li>
+</ul>
+<p>Copyright(C) 2011-2019, Intel Corporation. All rights reserved.</p>
+</div>
+<div class="section" id="optimization-notice">
+<h1>Optimization Notice</h1>
+<p>Intel compilers, associated libraries and associated development tools may
+include or utilize options that optimize for instruction sets that are
+available in both Intel and non-Intel microprocessors (for example SIMD
+instruction sets), but do not optimize equally for non-Intel
+microprocessors.  In addition, certain compiler options for Intel
+compilers, including some that are not specific to Intel
+micro-architecture, are reserved for Intel microprocessors.  For a detailed
+description of Intel compiler options, including the instruction sets and
+specific microprocessors they implicate, please refer to the &quot;Intel
+Compiler User and Reference Guides&quot; under &quot;Compiler Options.&quot;  Many library
+routines that are part of Intel compiler products are more highly optimized
+for Intel microprocessors than for other microprocessors.  While the
+compilers and libraries in Intel compiler products offer optimizations for
+both Intel and Intel-compatible microprocessors, depending on the options
+you select, your code and other factors, you likely will get extra
+performance on Intel microprocessors.</p>
+<p>Intel compilers, associated libraries and associated development tools may
+or may not optimize to the same degree for non-Intel microprocessors for
+optimizations that are not unique to Intel microprocessors.  These
+optimizations include Intel® Streaming SIMD Extensions 2 (Intel® SSE2),
+Intel® Streaming SIMD Extensions 3 (Intel® SSE3), and Supplemental
+Streaming SIMD Extensions 3 (Intel SSSE3) instruction sets and other
+optimizations.  Intel does not guarantee the availability, functionality,
+or effectiveness of any optimization on microprocessors not manufactured by
+Intel.  Microprocessor-dependent optimizations in this product are intended
+for use with Intel microprocessors.</p>
+<p>While Intel believes our compilers and libraries are excellent choices to
+assist in obtaining the best performance on Intel and non-Intel
+microprocessors, Intel recommends that you evaluate other compilers and
+libraries to determine which best meet your requirements.  We hope to win
+your business by striving to offer the best performance of any compiler or
+library; please let us know if you find we do not.</p>
+</div>
+</div>
+    <div class="clearfix"></div>
+    <div id="footer"> &copy; 2011-2019 <strong>Intel Corporation</strong> | Valid <a href="http://validator.w3.org/check?uri=referer">XHTML</a> | <a href="http://jigsaw.w3.org/css-validator/check/referer">CSS</a> | ClearBlue  by: <a href="http://www.themebin.com/">ThemeBin</a>
+      <!-- Please Do Not remove this link, thank u -->
+      </div>
+      </div>
+      </div>
+      </div>
+</div>
+</body>
+</html>

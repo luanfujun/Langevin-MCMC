@@ -1,0 +1,7 @@
+include_rules
+
+ifneq ($(TARGET),win32)
+: foreach fcntl.c |> !cc |>
+else
+: foreach lock_file.c |> !cc |>
+endif

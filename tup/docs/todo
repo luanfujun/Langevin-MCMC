@@ -1,0 +1,179 @@
+find a way to avoid committing after the parsing/delete stage
+
+let partial parsings commit rather than waiting for all directories to finish successfully
+
+will cp -Rp olddir newdir break everything if olddir already has a bunch of stuff compiled in it? - try --seriously-overwrite-outputfiles flag again? I forget why I didn't finish that.
+
+put dirtree in a list for things like tup_db_select_node_by_flags to avoid callback?
+
+don't continue down re-parse tree unless outputs of the dir have changed.
+
+give user an option to kill an autoupdate updater
+
+tup 'next_dirs' - print out other directories that use files in the current dir?
+
+name_list_entry - pointer to tup_entry?
+
+syntax: color %flags in output
+
+limit variable names: eg: 0-9a-zA-Z_-
+
+when you include a generated file, print path relative to command that was executed? eg: foo/bar.c includes ../blah/baz.c, print it out as ../blah/baz.c
+
+tup show to list the Tupfile as read in the current dir?
+
+read in +/- in order to add/remove worker threads?
+
+rule without a : should be an error?
+
+reverse of tup graph: give it a file, print the dir/command to create it?
+
+sqlite style graphs for parser
+
+cache flags and write out the diff before a commit? eg: no need to add a command to modify (in order to pick up where we left off), then remove it a second later when the command executes.
+
+replace 'tup monitor' with a tup.sh function and wrap it with valgrind
+
+monitor should move deleted files to use dir=-1 instead of actually doing the full node deletion. The full deletion is done at next tup upd. file should be renamed to avoid unique constraint violation (name=tupid?)
+
+look at gcov, gperf
+
+highlight += differently from = to make it obvious when a var is overridden
+
+spaces in filenames and/or directories?
+
+make all error messages and such pretty print on things other than 80 columns
+
+make 'tup graph .gitignore' or 'tup graph .git/refs/foo' have a better error message
+ - I was trying to do 'find . -type f | xargs tup graph' to just show files
+
+use auto-unmount for fuse?
+
+output files to a directory other than the current one?
+
+runscr: error message in parser about including generated Tupfiles: suggest using runscr instead
+
+runscr: Supports multi-outputs? eg: javac with inner classes
+
+runscr branch - need to wrap opendir/readdir to give generated files before they are created? Or else scripts won't wildcard properly?
+ - test: generate *.o in a sub/Tupfile, then use a python script in ./Tupfile to link sub/*.o - make sure ./Tupfile is run first (it should stop running and run sub/Tupfile once it opendirs() on sub/, then readdir() should include the generated list)
+
+after runscr: remove *-chain, <| rules
+
+use runscr to create a file during parsing stage - fail?
+use runscr to create a directory during parsing stage - fail?
+
+when doing 'touch foo' without '|> foo', why is it a different error message when 'foo' is already a node or not? (ie: if foo is a ghost, or something)
+
+add Kconfig file
+
+windows builds: Add a 'release' directory for new tags, and an 'experimental' directory for whenever a new set of commits is pushed.
+
+gentoo ebuild
+
+debian/ubuntu package
+
+use setsid() in monitor daemonize (or use daemon(3))
+
+add 'ls' command to show generated files and such in different colors?
+
+separate link table for parser? eg: instead of 'select to_id from link where from_id=? and to_id blah type=TUP_NODE_DIR', maybe we can do 'select to_id from parser_link where from_id=?'
+
+use 'cmdid' field instead of a link to point to outputs?
+
+should TUP_PLATFORM be a $-variable instead of an @-variable? ie: Does it make sense to be able to override it in tup.config, or should it always be static?
+
+use lemon to generate a parser?
+ - could also use grammar file to generate syntax file per http://code.google.com/p/autohighlight/
+
+tup web: examples: change codec in mplayer / upgrade firefox
+tup web: compare parallelism in make to tup
+
+build variants
+ - default variant has empty tup.config to enforce a standard configuration?
+ - or allow to disable default variant for out-of-source only build?
+ - allow variants to interact? Or would this force users to have certain variants installed? eg: Rule that has debug/foo.exe and release/foo.exe as inputs is allowed or not?
+ - can variants have configs checked in?
+ - in tree build - disable via config option? Out of tree build uses tup.config for variant?
+ - variants: Make a mingw variant, and a linux-uses-compat-libs variant, and a debug variant (-g -O -DQUEUE_MACRO_DEBUG)
+
+[    1/2    ] ./do_stuff.sh b.out
+-- write files
+update node set mtime=? where id=? [1315168842, 7]
+select to_id from link where from_id=? [8]
+select to_id from link where from_id=? [8]
+ - why read from the link table twice?
+
+fuse server: open(Tupfile) adds Tupfile to the read list twice - for getattr and open. Need both?
+
+fuse as a separate process fixes readdir? Ie: it can block and get data from tup
+
+Fix fuse_fs - don't depend on db, but preload the generated file list somehow
+
+remove tup_vardict_init() and just initialize on first use
+
+tup-cpp that replaces macros with @-variables
+ - also work for busybox and uClibc
+
+https://github.com/gittup/tup/issues/28 (README)
+
+remove TUP_NODE_DIR - any file or ghost (or generated?) can be a directory
+ - use "Tupfile" as the magic for parser, instead of directories
+ - can now create directories in rules?
+ : |> mkdir foo |> foo
+ : foo |> touch foo/bar |> foo/bar ?
+
+built-in build logging (eg: dump graph before each stage) - instead of using 'mtup' alias to do this. Can be enabled via config option. also timestamp various stages.
+
+: |> cat foo |>
+touch "cat foo"
+ - Separate namespace for commands and files?
+
+tup klee
+
+html: add tup.config example
+
+run script share site/wiki?
+
+gimme_node_or_make_ghost - if(new_dt == 0) block never used?
+
+write_list not needed? Just use mapping list?
+ - use string_trees instead of read/write/mapping list once all files are full path/canonicalized
+
+check using mmap instead of open/read for reading in files via fslurp? Use madvise to say it's a sequential read?
+
+use strsignal: http://www.cs.utah.edu/dept/old/texinfo/glibc-manual-0.02/library_21.html#SEC343
+
+get_output_tree called for both tup_db_check_actual_inputs and tup_db_check_actual_outputs?
+
+checksum - calculate as file is written out in fuse fs wrapper (can be used to skip future parts of the build if checksums match)
+
+do var replacing in read() in fuse instead of a 'tup preprocess' step? Maybe a ^-flag?
+
+recurse_delete_ghost_tree leaks memory?
+ - tup_db_change_node only used in monitor?
+
+bin should use string_tree instead of list
+
+html:
+  proof: no clean target
+  graphs
+   - re-use tup_dag_*.png and partial_dag_*.png
+   - link styles
+  when Tupfiles are parsed
+  supported tools / how to use things like ar and ln
+  files outside of tup are ignored
+   - hidden files can be written to for testing (result in warnings)
+   - hidden files cannot be read from
+  how files are deleted
+  man pages: tup command line, tup_api
+  error messages (eg: you get this error message if...)
+  document !macro.c !macro.o
+  wc3 validate tup webpages
+  should be able to checkout, tup init, tup upd
+   - or checkout the project as a subdirectory: tup init at a higher level, tup upd
+
+node-variables:
+   * trying to store an absolute path in a node var with full_deps on
+      - currently works if you add the node var after the full deps have been found
+   

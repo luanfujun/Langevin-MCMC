@@ -1,0 +1,43 @@
+
+explicit -d uint save result: 
+uint8.tif            :  128 x  128, 3 channel, uint8 tiff
+    tile size: 16 x 16
+
+unmodified copy result: 
+tmp.tif              :  128 x  128, 3 channel, uint8 tiff
+    tile size: 16 x 16
+
+copy with explicit -d uint16 result: 
+copy_uint16.tif      :  128 x  128, 3 channel, uint16 tiff
+    tile size: 16 x 16
+
+siappend result: 
+tmp.tif              :  128 x  128, 3 channel, uint8 tiff
+    tile size: 16 x 16
+ subimage  1:  128 x  128, 3 channel, uint16 tiff
+    tile size: 16 x 16
+
+combining images result: 
+tmp.tif              :  128 x  128, 3 channel, uint8 tiff
+    tile size: 16 x 16
+Reading nometamerge.exr
+nometamerge.exr      :   64 x   64, 6 channel, float openexr
+    SHA-1: 9F13A523321C66208E90D45F87FA0CD9B370E111
+    channel list: R, G, B, A, Z, channel3
+    a: 3
+    compression: "zip"
+    PixelAspectRatio: 1
+    screenWindowCenter: 0, 0
+    screenWindowWidth: 1
+    oiio:ColorSpace: "Linear"
+Reading metamerge.exr
+metamerge.exr        :   64 x   64, 6 channel, float openexr
+    SHA-1: 9F13A523321C66208E90D45F87FA0CD9B370E111
+    channel list: R, G, B, A, Z, channel3
+    a: 3
+    b: 1
+    compression: "zip"
+    PixelAspectRatio: 1
+    screenWindowCenter: 0, 0
+    screenWindowWidth: 1
+    oiio:ColorSpace: "Linear"

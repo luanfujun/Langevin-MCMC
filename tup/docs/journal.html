@@ -1,0 +1,647 @@
+<html>
+<head>
+<title>CS798 - Journal</title>
+</head>
+<body>
+<h2>CS798 - Journal</h2>
+<a href="proposal.html">Proposal</a><br>
+<a href="..">Main page</a><br>
+<h3>Milestones</h3>
+<h4>Complete:</h4>
+<ul>
+  <li>Monitor - 2008/02/03</li>
+  <li>Dependency generator (wrapper program and LD_PRELOAD library) - 2008/02/13</li>
+  <li>Reverse dependency file structure (SHA1 hash directories) - 2008/02/17</li>
+  <li>Updater - 2008-03-09</li>
+  <li>Command-based Updater - 2008-04-06</li>
+  <li>Configuration options - 2008-04-13</li>
+  <li>Build real package (GNU Octave) - 2008-04-22</li>
+</ul>
+<h4>Upcoming:</h4>
+<ul>
+  <li>Final presentation - 2008/04/30 - 10:30AM room 430A</li>
+</ul>
+<h3>Current Issues</h3>
+<ul>
+  <li>Reverse dependency files contain filenames dependent on the file in question. (eg: foo.hd contains the string "foo.c" if foo.c includes foo.h). When building foo.c, need to update foo.hd to make sure it contains one instance of "foo.c". Similarly, if foo.c is deleted, need to make sure "foo.c" is removed from foo.hd. Essentially need some sort of hash table that works efficiently in files (using open/read/write/seek).
+    <ul>
+       <li>Alternative - make foo.hd a directory, and put a link to foo.c in the directory?</li>
+       <li><b>Feb 10 update</b>: The directory alternative seems to work quite well so far, with the added benefit that it is very easy to see the dependency 'database'. Still remains to be seen if it will work well with multiple sub-directories.</li>
+        <li><b>Feb 17 update</b>: With a multiple subdirectory test (eg: with all source files in various 7-layer subdirectories), performance seemed to suffer. However, the directory structure can be flattened by using the SHA1 hash of the filename to generate a unique token. This prevents the reverse-dependency file structure from duplicating the entire program file structure multiple times, so fewer directories need to be created. Some readability is lost in that the dependencies can't easily be determined by doing 'ls' or 'find', but some simple scripts can be used to divine this information instead by reading the 'name' files in each hash directory, which effectively point back to the original filename.</li>
+    </ul>
+  <li>During compilation, need to update reverse dependency files of all included files. For a file that includes a large number of headers, this implies a large number of writes. How much does this adversely affect compilation?</li>
+  <li>Is there a way to prove (by induction?) that the updater will work on all graphs, given that it works for some sample graphs (eg: a diamond, a chain, etc).</li>
+</ul>
+<h3>Weekly Status</h3>
+<ul>
+  <li><a name="1"><b>Pre-Jan 20</b></a>: <p>Investigated using <a href="http://en.wikipedia.org/wiki/Inotify">inotify</a> for the Monitor program. Initial results look promising, though there is a limit of 8192 watches that can be created. The number of watches is configurable by writing to a file in /proc, but the Monitor program won't know ahead of time whether or not this limit will be reached. For the initial implementation, 8192 will be sufficient for testing purposes (assuming 1 watch per directory). Currently the Monitor recursively watches a given directory, and displays file update notifications to the screen.</p></li>
+
+  <li><a name="2"><b>Jan 27 - Feb 2</b></a>: <p>Monitor program finalized. Some simple tests were run, such as creating new directories and files, then deleting and re-creating them. The Monitor program is able to catch all file and directory modifications. Also started to work on the reverse dependency generator using the LD_PRELOAD method. This method works by loading a shared library before the invocation of gcc to intercept gcc's own filesystem calls (eg: fopen(), open(), creat()) to determine which files are being read/written to. Currently the shared library displays the files being accessed to the screen, as well as the mode (read or write). An initial test compiling a dummy C file that included one header shows the .c and .h file being read, and the .o file being written. Files in /tmp and files that are non-existent are ignored. The next step is to write out reverse dependency information (and possibly regular dependencies, as well?) to the disk. The first attempt at writing out reverse dependency information will be to use filesystem links (symlinks?) in directories.</p></li>
+  <li><a name="3"><b>Feb 3 - Feb 9</b></a>: <p>Using the preloaded library to write out dependencies proved more difficult than initially anticipated after last weeks results. Last week I was testing by preloading the library and compiling a simple C file:</p>
+  <pre>
+  #include "lib.h"
+
+  int main(void)
+  {
+     return libfunc();
+  }
+  </pre>
+  By preloading the library I got the following output:
+  <pre>
+  $ LD_PRELOAD=/home/mjs/tup/ldpreload.so gcc -c main.c
+  tup: Access file 'main.c' mode 0 from func open
+  tup: Access file 'lib.h' mode 0 from func open
+  tup: Access file 'main.o' mode 1 from func fopen64
+  </pre>
+  In theory at this point I could save the file accesses in a list, and then write out the reverse dependencies (eg: main.c and lib.h cause main.o to be updated). When I tried this, it seemed that the file accesses were going into separate lists. It turns out this is due to the fact that gcc spawns multiple sub-processes to handle the various tasks (pre-processing, compilation, and assembly). Each sub-process preloads its own version of the library, so the library is in fact initialized multiple times. This is evident after putting a constructor function in the library, and printing out the current PID with each file access:
+  <pre>
+  $ LD_PRELOAD=/home/mjs/tup/ldpreload.so gcc -c main.c
+  Library init.
+  Library init.
+  Library init.
+  tup[9162]: Access file 'main.c' mode 0 from func open
+  tup[9162]: Access file 'lib.h' mode 0 from func open
+  Library init.
+  tup[9163]: Access file 'main.o' mode 1 from func fopen64
+  </pre>
+  As you can see, the files are read in one process and written to in another. In order to accumulate all the files in one process to write out the dep files, it would seem ideal to have a server process of some kind, and then all other invocations of the preloaded library could send their file accesses to the server. Then when the server quits, it could write out all of the dependencies. This is a bit difficult to do with just LD_PRELOAD, since gcc's use of execv() causes the library's destructor functions to not be called in all cases. A much simpler approach is to use a wrapper program that can setup the server and the LD_PRELOAD environment, call gcc, and then on shutdown write out the dependencies. The wrapper program output for the same example looks as follows:
+  <pre>
+  $ /home/mjs/tup/wrapper gcc -c main.c
+  Started server '/tmp/tup-19142'
+  tup-preload.so[19145]: Send file 'main.c' mode 0 from func open
+  tup-server[19142]: Received file 'main.c' in mode 0
+  tup-preload.so[19145]: Send file 'lib.h' mode 0 from func open
+  tup-server[19142]: Received file 'lib.h' in mode 0
+  tup-preload.so[19146]: Send file 'main.o' mode 1 from func fopen64
+  tup-server[19142]: Received file 'main.o' in mode 1
+  Stopping server '/tmp/tup-19142'
+  </pre>
+  <p>Now even though the files are read in one process (19145) and written to in another (19146), they are all sent through the socket to the main wrapper process (19142) and accumulated in a list.</p></li>
+
+  <li><a name="4"><b>Feb 10 - Feb 16</b></a>: <p>There are still a few more tricks involved in getting the dependency information out. I extended the test case to include a lib.c file which also includes lib.h. This file is compiled and then archived into lib.a, and then both lib.a and main.o are built into the main executable (this is the same example from my <a href="proposal.html">proposal</a>). After the first run of using the list of files in the wrapper program to generate symlinks for dependencies, I ended up with the following file structure (and corresponding depgraph that was generated from a perl script):</p>
+  <p><table border=1><tr>
+  <td><pre>
+  $ ls *.tupd
+  lib.a.tupd:
+  lib.a  main  stdKBDfV
+
+  lib.c.tupd:
+  lib.o
+
+  lib.h.tupd:
+  lib.o  main.o
+
+  lib.o.tupd:
+  lib.a  stdKBDfV
+
+  main.c.tupd:
+  main.o
+
+  main.o.tupd:
+  main
+
+  main.tupd:
+  main
+  </pre></td>
+  <td><img src="depgraph-1.png"></td>
+  </tr></table></p>
+  <p>There are a few obvious issues - first, some files are both read and written to in certain cases (such as linking) which causes files to be dependent on themselves (eg: 'main'). Further, even though the preloaded library ignores files in /tmp, there are still some temporary files created in the current directory by certain programs (in this case, 'ar'). Getting rid of the links for files dependent on themselves was a trivial strcmp(), but the temporary file issue was more difficult.</p>
+  <p>What happens is 'ar' will write to the temporary file, and then issue a <em>rename()</em> call to move it to its final location (here, lib.a). Ideally the dependencies would be represented on disk without the intermediate temporary file. In other words, the process [read lib.o, write stdKBDfV, rename stdKBDfV to lib.a] should look the same as [read lib.o, write lib.a]. This is accomplished in the wrapper program handling rename events. The rename() libc call is wrapped by the preloader, similar to open() and fopen(). Instead of sending a single file event to the server, however, two file events are sent. This instructs the wrapper server to rename any existing files in its list to the new name. Then when the files are written out, all traces of the temporary file are gone. After these fixes, the following file structure and graph are obtained:</p>
+  <p><table border=1><tr>
+  <td><pre>
+  $ ls *.tupd
+  lib.a.tupd:
+  main
+
+  lib.c.tupd:
+  lib.o
+
+  lib.h.tupd:
+  lib.o  main.o
+
+  lib.o.tupd:
+  lib.a
+
+  main.c.tupd:
+  main.o
+
+  main.o.tupd:
+  main
+  </pre></td>
+  <td><img src="depgraph-2.png"></td>
+  </tr></table></p>
+  <p>Note that although this graph is what we would expect to get if we were using standard gcc/make dependencies, they are in fact written in the opposite order, wherein the output file is listed in the input file's dependency directory. So if 'main.c' is changed, we can easily look in main.c.tupd to see that main.o needs to be updated. Similarly, we can look in main.o.tupd and see that main needs to be re-linked. No mention of any lib.* files are made in these directories, so they could be ignored in this case.</p>
+
+  <li><a name="5"><b>Feb 17 - Feb 23</b></a>: <p>Per suggestion from Professor Lien, I constructed a test-case generator script that can generate random test cases. As input it takes the number of files to create, the number of headers the files should include, and the min/max directory hierarchy size. Currently all generated files are linked into a final executable (ie: there are no libraries here). One thing I tested with this script is the difference between having all files in a single directory, and all files in different directories that are 7 levels deep. Since the dependencies are stored using the paths of both objects, that means the dependency files would be 15 levels deep (1 extra for the filename itself). Using my benchmark program I compared the difference between using standard make with no dependency output and make using my wrapper program to generate dependencies. In each case there are 100.c files, each of which includes 7 other header files. I compared the amount of overhead in terms of execution time, as well as the disk space required. The execution time is measured by the factor increase over make without dependencies (so 1.05 means 5% extra time required).</p>
+  <table border=1>
+  <caption><i>Using the filenames to store dependencies vs. make with no dependency information.</i></caption>
+  <tr>
+     <td></td>
+     <td bgcolor="#bbffff"><b>Single Directory</b></td>
+     <td bgcolor="#bbffff"><b>7-Layers Deep</b></td>
+  </tr>
+  <tr>
+     <td bgcolor="#bbffff"><b>Factor</b></td>
+     <td>1.097951</td>
+     <td>1.293445</td>
+  </tr>
+  <tr>
+     <td bgcolor="#bbffff"><b>Disk blocks (du -sk)</b></td>
+     <td>1208</td>
+     <td>25004</td>
+  </tr>
+  </table>
+  <p>As you can see, the number of directories severely impacts the performance of the wrapper. This is because the wrapper program must create large directory hierarchies, many of which are essentially duplicates of each other. This takes a long time to stat() and mkdir() each level of the directory. Also, the large number of empty directories consumes a lot of disk space.</p>
+  <p>I recently started to use <a href="http://git.or.cz/">git</a> as a version control system for this project. Although I am still learning it, one of the things I found interesting is how it represents all kinds of objects (files, commits, etc) as SHA1 hashes in its database (which is also the filesystem). Using a similar approach here, instead of storing the dependency of a/b/foo.o on d/e/bar.h as ".tup/<font color="green"><b>d/e/bar.h</b></font>.tupd/<font color="blue"><b>a/b/foo.o</b></font>" I can take the SHA1 hash of the filenames to generate a unique ID for each file, and make that the directory. So here I would get ".tup/<font color="green"><b>4ebc353d14ff5a5bddd3fa79741ae7cc06719fd4</b></font>/<font color="blue"><b>0bc5dcc8490ad3f03010233ded74871358c9d349</b></font>". Although this is a bit more unreadable upon casual perusal (eg: using 'ls' or 'find'), it does have some nice properties. First, the depth of the dependency file tree is constant. Second, the objects in memory can easily be referenced by their 40-byte handle (20-byte SHA1 hash expanded as ASCII hex), instead of their filenames of arbitrary length (up to MAXPATHLEN, or 4096). This cuts down on the memory usage, since it is easier to allocate these objects on the stack. Using the same tests as before, I ran the benchmark program to determine the effect of using the SHA1 hash approach.</p>
+  <table border=1>
+  <caption><i>Using the SHA1-hash of the filename to store dependencies vs. make with no dependency information.</i></caption>
+  <tr>
+     <td></td>
+     <td bgcolor="#bbffff"><b>Single Directory</b></td>
+     <td bgcolor="#bbffff"><b>7-Layers Deep</b></td>
+  </tr>
+  <tr>
+     <td bgcolor="#bbffff"><b>Factor</b></td>
+     <td>1.116010</td>
+     <td>1.141484</td>
+  </tr>
+  <tr>
+     <td bgcolor="#bbffff"><b>Disk blocks (du -sk)</b></td>
+     <td>1216</td>
+     <td>1216</td>
+  </tr>
+  </table>
+  <p>Although in the single directory case we can see a slight degradation in performance as compared to the direct filename approach, it is apparent that the SHA1 approach offers more consistent behavior regardless of the file structure of the program. In particular, note that the filespace required is exactly the same in both cases (that is not a copy/paste error!) This is much more desirable than the 20-times increase in disk space required by the direct filename approach when using sub-directories.</p>
+  <p>Of course since the hash is a one-way algorithm, we need someway to get back from the hash name to the actual filename. In other words, convert the 0bc5d... name above into the filename "a/b/foo.o". This is currently done by creating a file called "name" in the corresponding 0bc5d... directory that contains the text "a/b/foo.o".</p>
+  </li>
+
+  <li><a name="6"><b>Feb 24 - Mar 1</b></a>: <p>I started work on the Updater portion of the build system. This required some modifications to the Monitor to get it to output changed file hashes to a special directory. For example, if you issue a "touch foo.c" command, the monitor will create a file called ".tup/attrib/e55780...". This is because 'touch' only affects file attributes (the timestamps). If the file is actually written to, it will go in the .tup/modify/ directory. I am not sure if the attrib directory will actually be necessary, but for now it is useful because I am used to doing 'touch foo.c; make' in order to test Makefiles, so I can do a similar test here.</p>
+  <p>For now I have started to write the Updater as a Perl script, since it is easy to test several different approaches before I get into the memory management issues associated with C. The Updater currently only handles files being touched or modified, so it does not yet work if files are created, deleted or renamed. Note that although the Wrapper program handles when programs use rename() internally (such as ar), the Monitor and Updater will also need to be rename/delete aware (for example, if the user issues 'mv foo.c bar.c' or 'rm foo.c'. This has not yet been addressed.</p>
+  <p>The algorithm used by the Updater is basically a depth-first search, using the nodes in the attrib/ and modify/ directories as the start nodes. The first stage of the algorithm walks the dependency graph stored in the filesystem to determine which nodes need to be updated (and abort if there is a circular dependency). The second stage walks the partial graph (again with DFS) to rebuild the nodes in their topological order.</p>
+  <p>In order to see this in action, I modified the grapher script to display nodes that would be updated in red, with the rest of the graph in black. The updater script only reads the nodes in red. I also created a new script that can generate a random graph. Its input is the number of nodes and number of edges, and then it randomly picks two nodes and assigns an edge between them. The names of the nodes are picked randomly from words in /usr/share/dict/words. Here is one such generated graph, where the 'bioplasmic' file was touched:</p>
+  <p><table border=1><caption><i>Randomly generated graph: Node 'bioplasmic' has been updated.</i></caption><tr><td><img src="depgraph-3.png"></td></tr></table></p>
+  <p>The graph as seen by the Updater contains only the red nodes. All subtrees in black are not visited at all. Here is the graph generated from the Updater script:</p>
+  <p><table border=1><caption><i>Partial DAG formed by the Updater</i></caption><tr><td><img src="depgraph-4.png"></td></tr></table></p>
+  <p>The Updater program also outputs the commands that would run in order to update the tree. The files were generated using a simple test program called 'create_dep' which reads in N files, and writes to 1 file. When used with the wrapper, it essentially creates the edges of the graph in the .tup directory. The last argument is the file that is written - this can be seen as the file being "updated":</p>
+  <pre>
+  6713836dd56d9f3986dba8956c1774b11f04977c
+  Visit: 6713836dd56d9f3986dba8956c1774b11f04977c
+  Visit: 4292086f7b6bf5c87ec0d5dc39774b534c9ed9c1
+  Visit: cbdb3db4b2645d5429755e26348aec5e7be16fad
+  Visit: e2f3af40b23c178d018db610121a6e5723a7eed9
+  Visit: adf3787e8363817082b2f720e7909a5895772f9d
+  Visit: eb51fc12bda245d93ac07adcb045d0b6bafec313
+  No cmd for .tup
+  No cmd for 6713836dd56d9f3986dba8956c1774b11f04977c
+  Skipping 4292086f7b6bf5c87ec0d5dc39774b534c9ed9c1 - count &gt;0
+  Execute ../../create_dep foreknowing bioplasmic depressant
+  Execute ../../create_dep depressant coquet stickwater
+  Execute ../../create_dep bioplasmic stickwater conspecies
+  Execute ../../create_dep stickwater spiketop
+  Execute ../../create_dep bioplasmic pinchpenny finikin
+  </pre>
+  <p>So essentially what happens is it prints the start node (671383... = 'bioplasmic'), and then the nodes that it visits while building the partial DAG. During this construction phase, each node is assigned a count that describes the number of incoming edges. The second phase starts at the virtual ".tup" node, which has edges to each of the start nodes (here, there's only one). For each edge, it decrements the destination node's count by 1. If its count reaches 0, the command to update the destination node is executed, and it is recursively parsed. For example, since 'conspecies' has two incoming edges, the first time it is visited it is skipped (which is what the "Skipping ..." line means). Then the nodes are updated in the following order: 'depressant', 'stickwater', 'conspecies', 'spiketop', and 'finikin'.</p>
+  <p>The Updater still needs to handle the other file changes (create/delete/move), and handle errors (eg: if updating a node fails, the Updater should be able to pick up where it left off).</p>
+  </li>
+
+  <li><a name="7"><b>Mar 2 - Mar 8</b></a>: <p>I continued to work on the Updater so it could handle other file updates. All of the testing for this week is done using a very simple test program. There are two .c files - main.c and other.c. Both of them include other.h and are compiled and then linked into 'main'. This is essentially the same as my earlier test case, only without the intermediate library.</p>
+  <p>The first issue I had with creating files was that the Updater doesn't know what the resulting object file will be linked/archived into. The easiest way to handle this seems to be to enlist the help of an external build script. This build script contains the domain-specific knowledge for the build (in this case, how to compile .c files and link .o files). This lets the Updater be unconcerned with the types of files or commands used to update them. Instead it just traverses the partial DAG and tells the build script what files need to be updated. The modify case is fairly straight-forward - it the build script receives a request to update a .o file, it will run gcc on the .c file. If it receives a request to update the executable, it will link all of the objects.</p>
+  <p>Creating files was a bit more challenging initially, though the result seems very simple. Consider an empty build. I have the following files after running 'tup init':</p>
+  <pre>
+  clean.sh
+  build
+  other.c
+  main.c
+  other.h
+  .tup
+  .tup/create
+  .tup/modify
+  .tup/delete
+  .tup/lock
+  </pre>
+  <p>When the Monitor is initialized, it will go through all the files in the directory and put links to them in .tup/create/...</p>
+  <table border=1><tr><td>
+  <pre>
+  clean.sh
+  other.c
+  build
+  main.c
+  other.h
+  .tup
+  .tup/create
+  .tup/create/8aba54e7...
+  .tup/create/6a8809d4...
+  .tup/create/80754af9...
+  .tup/create/406e031b...
+  .tup/create/76857b23...
+  .tup/modify
+  .tup/delete
+  .tup/lock
+  .tup/object
+  .tup/object/8aba54e7...
+  .tup/object/8aba54e7.../.name  ==  clean.sh
+  .tup/object/6a8809d4...
+  .tup/object/6a8809d4.../.name  ==  other.c
+  .tup/object/80754af9...
+  .tup/object/80754af9.../.name  ==  build
+  .tup/object/406e031b...
+  .tup/object/406e031b.../.name  ==  main.c
+  .tup/object/76857b23...
+  .tup/object/76857b23.../.name  ==  other.h
+  </pre></td>
+  <td><img src="updater-1.png"></td></tr></table>
+  <p>My initial thought was that the Updater should go through the create/ directory and tell the build script to update each file there, similar to the modify case. This would result in both .o files being created, so their entries would also go in .tup/create/. If the Updater is run again, it would then try to issue two separate update commands to the build script, one for each .o file. Unfortunately, we only want to run a single linking command using all objects. So it seems using the approach of having create/ objects cause updates is infeasible without putting build-specific knowledge in the Updater.</p>
+  <p>After hitting that dead-end, I came up with the following. Instead of actually compiling the .c file when a 'create' update is received by the build script, I just add some dependency links. So for main.c, I run 'create_dep main.c main.o' to create the main.c-&gt;main.o dependency. By adding the main.o entry to the tup filesystem, its entry is also put in the create/ directory, and the main.c entry is moved from create/ to modify/. The Updater loops and re-processes all the new files in the create/ directory (now the entries for main.o and other.o). When the build script receives a 'create' event for an object file, it runs 'create_dep main.o main' to create the link from the object to the executable. The Updater loops again and sends the 'create' event for main to the build script, which does nothing because this is the final node. Note that at this point, only files in the .tup/ directory have been modified. No files have actually been compiled, and main.o/other.o/main do not exist yet. Here is the current structure:</p>
+  <table border=1>
+  <tr><td>
+  <pre>
+  clean.sh
+  other.c
+  build
+  main.c
+  other.h
+  .tup
+  .tup/create
+  .tup/modify
+  .tup/modify/8aba54e7...
+  .tup/modify/6a8809d4...
+  .tup/modify/80754af9...
+  .tup/modify/406e031b...
+  .tup/modify/76857b23...
+  .tup/modify/4ab0ef41...
+  .tup/modify/073b2dd6...
+  .tup/modify/b28b7af6...
+  .tup/delete
+  .tup/lock
+  .tup/object
+  .tup/object/8aba54e7...
+  .tup/object/8aba54e7.../.name  ==  clean.sh
+  .tup/object/6a8809d4...
+  .tup/object/6a8809d4.../.name  ==  other.c
+  .tup/object/6a8809d4.../4ab0ef41...
+  .tup/object/80754af9...
+  .tup/object/80754af9.../.name  ==  build
+  .tup/object/406e031b...
+  .tup/object/406e031b.../.name  ==  main.c
+  .tup/object/406e031b.../073b2dd6...
+  .tup/object/76857b23...
+  .tup/object/76857b23.../.name  ==  other.h
+  .tup/object/4ab0ef41...
+  .tup/object/4ab0ef41.../.name  ==  other.o
+  .tup/object/4ab0ef41.../b28b7af6...
+  .tup/object/073b2dd6...
+  .tup/object/073b2dd6.../.name  ==  main.o
+  .tup/object/073b2dd6.../b28b7af6...
+  .tup/object/b28b7af6...
+  .tup/object/b28b7af6.../.name  ==  main
+  </pre></td>
+  <td><img src="updater-2.png"></td></tr></table>
+  <p>The 'create' logic in the build script is effectively equivalent to what would go in a typical Makefile (assuming one has automatic dependency resolution to avoid manually typing in .h dependencies). Here is a comparison between what a Makefile would look like (without auto-dependency pieces) and the relevant part of the build script, which is currently in Perl. Note that although the build script is more verbose, they essentially say the same thing (except for the gcc commands, which show up in the 'modify' section). Also, the build script doesn't have to be in Perl, I just used that for now because it was easy.</p>
+  <table border=1>
+  <tr><td align=center><b>Makefile</b></td>
+  <td align=center><b>build script 'create' portion</b></td></tr>
+  <tr valign=top><td>
+  <pre>
+  main: main.o other.o
+  	gcc -o $@ $^
+  %.o: %.c
+  	gcc -c $&lt; -o $@
+  </pre>
+  </td><td>
+  <pre>
+        if($name =~ /\.c$/) {
+                $output = $name;
+                $output =~ s/\.c$/.o/;
+                if(system("create_dep $name $output") != 0) {
+                        exit 1;
+                }
+        } elsif($name =~ /\.o$/) {
+                if(system("create_dep $name main") != 0) {
+                        exit 1;
+                }
+        } else {
+                print "  ignore  $name\n";
+        }
+  </pre>
+  </td></tr></table>
+  <p>At this point the Updater has finished the 'create' loop, since no new dependencies have been created by the build script. It then goes into its modify loop, which will actually go through the partial DAG as described last week. During the modify loop, the .c files will actually be compiled and linked. Also, the wrapper program will generate the links in the directory for other.h for the dependencies on the object files. The complete DAG is then present in the tup hierarchy. At this point a new .c file (say, foo.c) could be created in the directory. A link would be created in the create/ directory. When the Updater is run, it will call the build script to generate the foo.c-&gt;foo.o and foo.o-&gt;main links, and then run through the modify loop to build them.</p>
+  <p>Deleting nodes provided another challenge. My initial thought would be to count the number of incoming edges to a node. When a node is deleted, it would decrement the count of any dependencies. If the count went to 0, that node would also be deleted. Otherwise, it would be updated as if the file were modified. However, this doesn't quite work. For example, we have other.c which includes other.h. I would expect that if other.h is deleted, then other.c is recompiled into other.o (success or failure doesn't matter - I just expect it would re-trigger the compile). However, if other.c is deleted, I would expect that other.o is also deleted, and then main is relinked (again success or failure doesn't matter on the link). This is difficult because in the Updater we just have two edges to other.o, and don't know which ones should trigger updates and which ones should trigger deletes. Again this is build-specific knowledge, so I ended up moving it to the build script.</p>
+  <p>Let's say we had added foo.c to the build, then realized the mistake and deleted it. We still have foo.o lying around, and main is still linked with the extra object. The Monitor put the delete event in the delete/ directory. The Updater actually treats delete/ events almost the same as modify/ events, with the exception that sometimes it will delete objects in the tup hierarchy depending on the result of the build script. Here is the current full DAG. The red nodes are the ones that are candidates for deletion. Note that foo.c has already been removed at the command line.</p>
+  <table border=1><tr><td><img src="updater-3.png"></td></tr></table>
+  <p>When the Updater runs, it will go through the partial DAG and issue delete commands to the build script for each file. The build script ignores the .c file since it is already removed. When it receives a delete request for foo.o, we make a check. If foo.c exists, we try to re-compile. Otherwise, we delete foo.o. Again, this knowledge is specific to this particular build environment, so it is kept in the build script. Currently it just removes the file and exits with a special return code to let the Updater know that it can remove the object from the tup filesystem. The Updater also issues the delete request to the build script for the main executable. The build script also issues a check here. If there are still objects in the directory, it will try to link them. If not, it will delete main. In this particular case, after foo.c is deleted and the Updater runs we have the following:</p>
+  <table border=1><tr><td><img src="updater-4.png"></td></tr></table>
+  <p>So it seems that creating and deleting files can be handled by the Updater. Moving files is handled by doing both a delete on the old file and a create on the new file (this is handled by the Monitor, which picks up such events). Still to come is a lot of testing (for example, deleting one node and modifying another, or creating a node and deleting it before running the Updater).</p>
+
+  <li><a name="8"><b>Mar 9 - Mar 15</b></a>: <p>Since the Updater is largely complete (aside from probably a few corner cases), Professor Lien suggested that I get an initial comparison of the time to build a project using the Updater versus building the same project with make. I am using GNU make v3.81 in these tests. This is different from my comparison in February, which was done largely to determine the overhead of using the Wrapper program. Now that the Updater and build script are functional, I can get a more direct comparison between make (using gcc -MMD for dependencies) and my set of programs.</p>
+  <p>I am re-using the test program from before, where I generate .c/.h file pairs, and put them in a random directory hierarchy. The files go in directories anywhere from 0 to 7 layers deep. Each C file includes 7 headers (so 0.c includes 0.h, 1.h, 2.h, ... 6.h). I modified the program slightly so that each directory of C files is compiled into a separate executable. The program also generates two copies of the same tree - one with a Makefile, and one with my Perl build script that is used with the Updater. I compared the execution time (using the real value of 'time' in the shell) of the two in the following categories:</p>
+  <ul>
+    <li>Initial build time (that is, time to generate all objects and programs)</li>
+    <li>Changed C file build (touch 0.c, and rebuild)</li>
+    <li>Changed header file build (touch 0.h, and rebuild). Note this actually rebuilds 7 .c files, and re-links them into their executables.</li>
+    <li>No files changed</li>
+  </ul>
+  <p>In order to make sure both programs were running in a fair environment, I made sure the disk was synced before running. I also attempted to pre-load the cache in both cases by doing a 'cat' on each file before the initial build. After the initial build, I again ran sync to make sure everything was written out before doing other tests. The four categories of testing were done over the following input sizes: 1, 10, 100, 1000, and 10000. For example, at size=100 there are files 0.c - 99.c, and 0.h - 99.h scattered about the hierarchy. 10000 would be about the size of a large project (such as the Linux kernel, or Firefox). The initial build time test was done only once (since it takes a while to do), and the change file/no-op tests were done 10 times each and averaged.</p>
+  <p>I ran into a few issues with the Updater while trying the 10000 node case. First, the Monitor quickly hit the 8192 directory limit of inotify. I increased this by doing:</p>
+  <pre>
+  echo 65536 &gt; /proc/sys/fs/inotify/max_user_watches
+  </pre>
+  <p>This was done before running any tests (not just the 10000 node case). Another issue I encountered was that I hit the limit of the maximum number of files in a directory. Specifically, the .tup/object/ directory filled up. I worked around this using the same method as git. Git creates 256 sub-directories for its objects (00, 01, 02...ff) and uses the first byte of the hash to determine which directory it goes in. This effectively cuts down the number of objects in a single directory by a factor of 256. With these changes in place, I was able to build the 10000 node case using the Updater.</p>
+  <p>Here are the results for the initial build times. Note that in this graph (and the next few), both axes are logarithmic.</p>
+  <table>
+  <caption><i>Initial build times (Perl builder vs. make)</i></caption>
+  <tr><td>
+  <table border=1>
+  <tr>
+    <td align=center><b>Size</b></td>
+    <td align=center><b>Make (time in s)</b></td>
+    <td align=center><b>Updater (time in s)</b></td>
+  </tr>
+  <tr><td>1</td><td>0.02</td><td>0.06</td></tr>
+  <tr><td>10</td><td>0.2</td><td>0.55</td></tr>
+  <tr><td>100</td><td>2.06</td><td>5.41</td></tr>
+  <tr><td>1000</td><td>21.61</td><td>56.56</td></tr>
+  <tr><td>10000</td><td>222.92</td><td>854.54</td></tr>
+  </table>
+  </td><td>
+  <img src="perl-plot-initial.png">
+  </td></tr></table>
+  <p>In all cases, the Updater requires about 2.5 - 4.0 times more time during the initial build. It seems to scale at the same rate as make, except in the last case where the time spikes a bit. This might be because the large number of files written by the Updater no longer fits in the cache, causing things to be written out early. However, this investment seems worthwhile when considering the update times. First consider a single C file touched:</p>
+  <table>
+  <caption><i>C file changed (Perl builder vs. make)</i></caption>
+  <tr><td>
+  <table border=1>
+  <tr>
+    <td align=center><b>Size</b></td>
+    <td align=center><b>Make (time in s)</b></td>
+    <td align=center><b>Updater (time in s)</b></td>
+  </tr>
+  <tr><td>1</td><td>0.02</td><td>0.04</td></tr>
+  <tr><td>10</td><td>0.03</td><td>0.04</td></tr>
+  <tr><td>100</td><td>0.111</td><td>0.04</td></tr>
+  <tr><td>1000</td><td>1.134</td><td>0.04</td></tr>
+  <tr><td>10000</td><td>18.77</td><td>0.042</td></tr>
+  </table>
+  </td><td>
+  <img src="perl-plot-c_file.png">
+  </td></tr></table>
+  <p>Although the Updater performs worse when dealing with small numbers of files, it quickly catches up to make after a sample size of about 20. It also gives nearly constant performance, with a slight increase in the 10000 node case. This is probably due to increased seek time when reading the .tup/object/ directory with a large number of files.</p>
+  <p>Next we touch a single header file, and update. This builds 7 .c files (which are randomly scattered in various directories), and re-links their binaries. This could be seen as updating the interface to a library, for example. Here are the build results:</p>
+  <table>
+  <caption><i>Header file changed (Perl builder vs. make)</i></caption>
+  <tr><td>
+  <table border=1>
+  <tr>
+    <td align=center><b>Size</b></td>
+    <td align=center><b>Make (time in s)</b></td>
+    <td align=center><b>Updater (time in s)</b></td>
+  </tr>
+  <tr><td>1</td><td>0.02</td><td>0.04</td></tr>
+  <tr><td>10</td><td>0.15</td><td>0.23</td></tr>
+  <tr><td>100</td><td>0.24</td><td>0.24</td></tr>
+  <tr><td>1000</td><td>1.258</td><td>0.24</td></tr>
+  <tr><td>10000</td><td>18.877</td><td>0.28</td></tr>
+  </table>
+  </td><td>
+  <img src="perl-plot-h_file.png">
+  </td></tr></table>
+  <p>This is similar to the C file case. The only extra anomaly here is from 1 node to 10 nodes, since in the 1-node case, touching the header obviously only updates 1 file. In the 10-node case (and all other cases) 7 files are re-compiled. This is useful to see that the Updater scales with respect to the number of files that need to be updated (ie: the size of the partial DAG) rather than the size of the entire project, as make does. Finally we consider the time to "do nothing". Basically this is the time to run make or the updater after a complete build.</p>
+  <table>
+  <caption><i>No files changed (Perl builder vs. make)</i></caption>
+  <tr><td>
+  <table border=1>
+  <tr>
+    <td align=center><b>Size</b></td>
+    <td align=center><b>Make (time in s)</b></td>
+    <td align=center><b>Updater (time in s)</b></td>
+  </tr>
+  <tr><td>1</td><td>0</td><td>0</td></tr>
+  <tr><td>10</td><td>0.01</td><td>0</td></tr>
+  <tr><td>100</td><td>0.09</td><td>0</td></tr>
+  <tr><td>1000</td><td>1.111</td><td>0</td></tr>
+  <tr><td>10000</td><td>18.736</td><td>0</td></tr>
+  </table>
+  </td><td>
+  <img src="perl-plot-nothing.png">
+  </td></tr></table>
+  <p>The Updater doesn't register any time using the 'time' shell command. All it really does in this case is look in the create/, modify/, and delete/ directories, and then quit because there are no hashes there. In contrast, make reads in all of its dependency files, builds the entire DAG, and then does a stat() on every file in the DAG in order to compare timestamps.</p>
+  <p>With these results, it is pretty clear that the initial investment for using the Updater is significant. So from a build-once and throw away perspective, it is not worthwhile. However, during a development cycle where a developer focuses only on a small part of a larger program, the time savings from not having to constantly build the entire DAG could be useful.</p>
+  <p>In order to try to improve the initial build results of the Updater, I looked into removing the use of the Perl script for the build portion. This is because for each file in the directory, I do a fork(), then exec Perl, which may eventually exec gcc or ld. Instead I tried implementing the build portion in C to skip the extra step of going to Perl. This still does a fork() for each file in the create phase, but does not invoke the Perl interpreter for each one. Here is a comparison between using the Perl builder and the C builder, along with the previous make results:</p>
+  <table>
+  <caption><i>Perl builder vs. C builder</i></caption>
+  <tr><td>
+  <table border=1>
+  <tr>
+    <td align=center><b>Size</b></td>
+    <td align=center><b>Make (time in s)</b></td>
+    <td align=center><b>Perl builder (time in s)</b></td>
+    <td align=center><b>C builder (time in s)</b></td>
+  </tr>
+  <tr><td>1</td><td>0.02</td><td>0.06</td><td>0.03</td></tr>
+  <tr><td>10</td><td>0.21</td><td>0.55</td><td>0.29</td></tr>
+  <tr><td>100</td><td>2.07</td><td>5.41</td><td>2.89</td></tr>
+  <tr><td>1000</td><td>20.44</td><td>56.56</td><td>31.07</td></tr>
+  <tr><td>10000</td><td>219.01</td><td>854.54</td><td>551.34</td></tr>
+  </table>
+  </td><td>
+  <img src="cbuilder-vs-perl-vs-make.png">
+  </td></tr></table>
+  <p>The C builder results are slightly improved, yielding a 1.5 factor increase over make in the small cases, and a 2.5 factor in the 10000 node case. Again this increase in the last case is probably because of the sheer volume of files that need to be created. I may investigate using a shared library plugin instead of a separate C program to avoid process creation overhead (except when running gcc), though I don't think this will be enough to overcome the time to create all the files that the Updater uses.</p>
+
+  <li><a name="9"><b>Mar 16 - Mar 22</b></a>: <p>I made the change to use a shared library plugin instead of always executing a program. However, this did not significantly improve the initial build time (for example, the 1000 node case went from 31s to 29s). I don't think there is much else that could result in better initial performance, other than perhaps a filesystem designed specifically for many small files.</p>
+  <p>Instead this week I concentrated on getting a base set of test cases running to verify the expected functionality of the Updater. This way I could make changes to the architecture or support libraries and verify that no functionality was broken. There are currently 12 tests, though there will likely be many more as various corner cases are checked. Currently I have tests to verify:</p>
+  <ul>
+    <li>Pathnames are correctly canonicalized (eg: "bar.c", "foo/../bar.c", and "./bar.c" should all resolve to the same filename, and therefore the same hash).</li>
+    <li>Creating and modifying C files correctly compiles the expected files, and the resulting objects contain the expected symbols.</li>
+    <li>Compiling two C files that link into the same executable will only be linked once.</li>
+    <li>If a file is edited to no longer include a header file, the header file's dangling reference will be correctly removed if the header is updated. Also, the C file which no longer includes it will not be compiled.</li>
+    <li>Removing a C file will result in removal of the corresponding object, and re-linking of the executable. Removing all C files will result in the removal of the executable, as well.</li>
+    <li>Removing an object file or executable will result in rebuilding that object/executable if it can still be built.</li>
+  </ul>
+  <p>Some of the above are split into multiple test cases. A few issues came up during testing. First, paths were not being canonicalized, except in very simple instances (I was removing the leading "./" if it existed). However, this fails to account for a C file that might do something like:</p>
+  <pre>
+  #include "../bar.h"
+  </pre>
+  <p>This would cause the ldpreload library to hash "../bar.h" instead of "bar.h" (in whichever directory it actually exists), so the wrapper would not write out the correct dependencies. I had to write my own canonicalize() function, since the realpath() function that exists in libc assumes the file exists, but in my case I may be trying to create a link to a file that does not exist yet. The canonicalize() function I wrote removes duplicate /'s, any ./'s, and ../'s where appropriate. So ./foo/.//bar/../baz.c would canonicalize to foo/baz.c</p>
+  <p>Another problem I had was with the dangling header reference. Specifically, suppose both foo.c and bar.c include foo.h:</p>
+  <table border=1><tr><td><img src="dangling1.png"></td></tr></table>
+  <p>Now if bar.c is modified and no longer includes foo.h, the Updater will see bar.c in the modify/ directory, and so it will re-compile bar.o and re-link the executable. However, its partial DAG will not include the header since it was not changed. Therefore the link from foo.h-&gt;bar.o still exists:</p>
+  <table border=1><tr><td><img src="dangling2.png"></td></tr></table>
+  <p>If foo.h is later modified, the dangling link should be removed, and bar.o should not be re-compiled. This is accomplished by checking the inode of the link to the inode of the corresponding .name file. Since the links are actually hard links, these inodes should be identical. However, when we re-compile bar.o, we can re-create the .name file so it will have a new inode, and all links will point to the old inode. Any headers that it still includes will have their links re-written, so they will point to the new inodes. Any headers that were removed will point to the old inode. So if we come across a link whose inode differs from its target, we can simply discard the link and skip processing that part of the DAG. In this situation, if foo.h were now modified, only foo.c is re-compiled and the dangling link is automatically removed:</p>
+  <table border=1><tr><td><img src="dangling3.png"></td></tr></table>
+  <p>You may notice that the header links here are colored in grey, while the .c-&gt;.o links are in black. I made an attempt to clean up the deletion logic, so the Updater can automatically delete files without having to consult the builder. Links are now categorized as "primary" (black) or "secondary" (grey). In addition to the .name file, each object directory also contains a .secondary file. Primary links will still link to the .name file, while secondary links will of course link to .secondary. Primary links are created by the builder when creating the initial DAG (eg: in response to objects put in the create/ directory). Secondary links are created by the wrapper for any files that are read in by the wrapped program, unless they are already primary links. So when we run "gcc -c foo.c -o foo.o", it will see that the foo.c-&gt;foo.o link already exists and won't create it, but it will make a foo.h-&gt;foo.o secondary link. Before writing out the links, the wrapper will delete and re-create the target's .secondary file. This effectively invalidates all secondary links to account for the dangling reference above.</p>
+  <p>If a C file is deleted, the Updater will unlink its .name file and its references in its object directory (the primary link to the .o's .name file). When the .o file is processed, the Updater will stat() its .name file and see that there are no more primary links to this file. Therefore the object file and its object directory contents will also be deleted. When it processes the executable, it may see that there are still primary links, and then re-link it. Previously I had the builder check if a C file was still accessible before compiling, and if not it would return a special error code to the Updater to indicate that it should be deleted. The separation of primary/secondary links makes the build logic much cleaner, and the Updater can properly delete files based on what information was given during the create phase. The builder program now doesn't even need to make a distinction between a dependency that was modified vs one that was deleted.</p>
+  </li>
+
+  <li><a name="10"><b>Mar 23 - Mar 29</b></a>: <p>I added a few new tests:</p>
+  <ul>
+    <li>A C file is renamed (eg: user runs 'mv bar.c realbar.c'). This should cause bar.o to be deleted, realbar.c to be compiled, and the executable should be re-linked with realbar.o</li>
+    <li>Rename a C file that includes a header. This creates a dangling reference, so it is basically a combination of the previous case and the dangling header case described last week.</li>
+    <li>Target executable name is changed. This should cause the old executable to be deleted, and the objects re-linked into the new executable name.</li>
+  </ul>
+  <p>The first two tests work as expected, but the last test highlighted some current issues. First, the C builder that I have been using is a bit complex and unwieldy, since the build description is written in C code rather than a more convenient language (such as a Makefile). Second, the Updater doesn't really provide the ability to do the right thing when the desired target is changed. Specifically, I would like to mark certain links for deletion (ie: the bar.o -&gt; oldexe link), so that oldexe can be removed.</p>
+  <p>I think the long-term solution for the first issue is to write a simple configuration file parser in C, similar to how make parses Makefiles. In the meantime, however, 'make' itself is actually a pretty good substitute. I use make in a similar way to the Perl script previously, only make is the parser instead. The scripts are a bit simpler, though utilize some esoteric properties of Makefiles. Here's an example of a simple make-based build script:</p>
+  <pre>
+  ifeq (1,$(TUP_CREATE))
+  $(warning create $(MAKECMDGOALS))
+  $(filter %.c,$(MAKECMDGOALS)): ; tup link $@ $(@:.c=.o)
+  $(filter %.o,$(MAKECMDGOALS)): ; tup link $@ $(@D)/prog
+  else
+  $(warning update $(MAKECMDGOALS))
+  $(filter %.c,$(MAKECMDGOALS)): ;
+  $(filter %.o,$(MAKECMDGOALS)): ; tup wrap gcc -c $(@:.o=.c) -o $@
+  $(filter %prog,$(MAKECMDGOALS)): ; tup wrap gcc -o $@ $(@D)/*.o
+  endif
+  .PHONY: $(MAKECMDGOALS)
+  </pre>
+  <p>This is fairly similar to the original Perl script, only the separate "if delete" block is removed because of last week's work using the secondary links. Also note that it is not really a standard Makefile in any sense. This Makefile is run with a single target each time. An example of the executions with a single C file would look like this:</p>
+  <pre>
+  make foo.c TUP_CREATE=1
+  make foo.o TUP_CREATE=1
+  make prog TUP_CREATE=1
+  make foo.c
+  make foo.o
+  make prog
+  </pre>
+  <p>The first three create lines are used to create the default links. The next three would actually build/link the files. (This is the standard create and update procedure of the Updater).</p>
+  <p>Getting back to the original point, suppose we wanted to change the program name from "prog" to "myexe". Ideally we would update the Makefile and change the two instances of "prog", and then run the Updater. This should delete the existing program and its references in the .tup hierarchy, and then create the new "myexe" program. However, the only file that is changed is the Makefile itself. So what happens currently is the hash for "Makefile" is put in the .tup/modify/ directory. Then when the Updater is run, it passes this hash in, and the builder program (make running on the Makefile) ignores it. I'm currently unsure of how best to approach this. It seems ideally what I would want is to re-create all the links that were generated in the create phase and see how they differ. For example:</p>
+  <table border=1><tr><td>Last create</td><td>Makefile updated, create</td></tr>
+  <tr><td>foo.c -&gt; foo.o<br>foo.o -&gt; prog</td>
+      <td>foo.c -&gt; foo.o<br>foo.o -&gt; myexe</td>
+  </tr></table>
+  <p>I think the .tup directory needs to keep track of how the links were originally created. Then when the Makefile is updated, we can run the create phase again for files in that directory. The new links could be compared against the old links, and appropriate action could be taken. For example, since the foo.c-&gt;foo.o link exists in both sides of the table, we know that foo.o wouldn't need to be re-compiled. Since the link to "prog" is now missing, we could take action to delete that file and the object in the .tup directory. Similarly, since the link to "myexe" is new, we would know that we have to update it. I haven't worked out the details of how this will actually be implemented yet, but it seems like a reasonable interpretation that could be handled by the Updater (as opposed to forcing all the logic in the builder somehow).</p>
+  </li>
+
+  <li><a name="11"><b>Mar 30 - Apr 5</b></a>: <p>This week I started working on what may end up being a fairly radical departure from the existing object directory infrastructure. Though all of the core concepts remain the same, I am now keeping track of multiple kinds of objects. There are still the file objects from before (where each file is hashed and has its name stored in ".name"). I am also working on adding command objects that represent the actual system commands used to transform file objects. For example, there is an object for the string "gcc -c foo.c -o foo.o". This string is also hashed and put into the object directory, but is stored in the file ".cmd" to differentiate it from the file objects. The dependencies are still stored in the directory each object. However, instead of storing the foo.c-&gt;foo.o relation directly in foo.c's directory, foo.c points to the command object for "gcc -c foo.c -o foo.o", and that command object points to foo.o. The reason for this will hopefully be apparent shortly.</p>
+  <p>The 'create' phase of the Updater is also changed slightly to use these new command objects. The configuration file (which is currently a Makefile) in each directory generates the command objects, similar to how it was described last week. In contrast to the previous implementation, the create phase is invoked once per directory instead of once per file. This allows us to keep track of which commands were created, so if the configuration file changes we can do a comparison between the old and new instances to see what changed.</p>
+  <p>Previously the configuration file had separate create and update phases (by checking for the TUP_CREATE environment variable). This time, there is only the create phase, since the updating is actually done by the commands that are generated from the configuration file. Also, this version looks much more similar to an actual Makefile. The main differences are all files are marked as PHONY so make won't check the timestamps (and possibly prevent some targets from executing), and that it uses tup commands instead of regular gcc invocations. Again, this is just responsible for setting up the initial links in the DAG and the command objects. Here is an example configuration file:</p>
+  <pre>
+srcs := $(wildcard *.c)
+objs := $(srcs:.c=.o)
+prog := prog
+
+$(prog): $(objs)
+        @echo "Link '$^' into '$@'"; \
+        tup command "gcc $^ -o $@" &amp;&amp; \
+        $(foreach f,$^,tup input $f "gcc $^ -o $@" &amp;&amp;) \
+        tup output "gcc $^ -o $@" $@
+$(objs): %.o: %.c
+        @echo "Compile '$&lt;' into '$@'"; \
+        tup command "gcc -c $&lt; -o $@" &amp;&amp; \
+        tup input $&lt; "gcc -c $&lt; -o $@" &amp;&amp; \
+        tup output "gcc -c $&lt; -o $@" $@
+
+.PHONY: $(prog) $(srcs) $(objs)
+  </pre>
+  <p>The 'tup command' lines create the command objects for the various gcc commands that need to be executed. These objects are also stored as dependencies of the directory name. Since this is in the top-level, the "." directory is used. Then the 'tup input' and 'tup output' lines generate the expected input and output links for these commands. Naturally we don't specify the header dependencies here, as we expect those to be added later by the wrapper program. Using a familiar two C file program, here is the DAG that is generated:</p>
+  <table border=1><tr><td><img src="command1.png"></td></tr></table>
+  <p>The update phase should work largely the same as before. However, instead of executing the update for each file as we process the DAG, we just execute the command objects. For example, previously when the "ok.o" node was processed, the update logic in the Makefile would run gcc on "ok.c". Now a node like "ok.o" is simply processed in memory by the Updater. When it gets to the command node (as denoted by the rectangles) it will execute that shell command. This means that the configuration file does not need to be used during the entire update phase.</p>
+  <p>Now suppose we edit the configuration file and change the program name from "prog" to "mainexe". All we really change is the third like to "prog := mainexe", and then run the Updater. Since the configuration file was changed, the Updater will re-run the create phase for this directory. We will still generate the two "gcc -c" commands, but the last command will be different. Since the "gcc foo.o ok.o -o prog" command is no longer generated, its object reference is put into the delete/ directory. Here is the new graph after the create phase has finished:</p>
+  <table border=1><tr><td><img src="command2.png"></td></tr></table>
+  <p>At this point what will probably happen is the Updater will delete the objects for "gcc foo.o ok.o -o prog" and "prog", as well as the actual file "prog". This would leave the links to "gcc foo.o ok.o -o prog" as dangling references, which could be lazily cleaned up as done previously for header links. The Updater would of course also run the new command and generate the new "mainexe" executable. However, I don't actually have that implemented yet. I also still have to change the wrapper program to generate links to the command object instead of the output file. (For instance, "foo.h" would be linked to "foo.o" instead of the gcc command). After those details are worked out, I will be able to revisit the test cases to see if all the old functionality is maintained.</p>
+  </li>
+
+  <li><a name="12"><b>Apr 6 - Apr 12</b></a>: <p>I got almost all of the test cases working again using the new command objects. This involved updating the Wrapper program to output dependencies to and from the command object, and some additional logic in the Updater to delete the correct objects and files when necessary. The only exception is the test case for deleting output files. The test involves building a program, then deleting one of the object files (eg: 'rm foo.o'). This puts the hash for foo.o in the delete/ directory. When the Updater runs, ideally I would like to have the object file re-created and the program re-linked. This is what the test previously checked (and successfully worked under the old system). The reason this worked before is because the partial DAG that was loaded would have the 'foo.o' and 'prog' nodes in memory, so it would be re-compiled and re-linked. Now, however, I have the 'foo.o' node, the command for linking, and the 'prog' output node. I don't have the command node that creates foo.o in the partial DAG, because none of its inputs were modified. Here is the view of the DAG after bar.o is deleted, and the create phase completes:</p>
+  <table border=1><tr><td><img src="cmd-delete1.png"></td></tr></table>
+  <p>The nodes that the Updater sees in the partial DAG have the blue outline. Since the Updater no longer passes the filenames on to a separate program, when the bar.o node is processed it will not be re-made. Then when the Updater tries to execute the command node, it will fail because bar.o is not present. In this situation it may be possible to create a backward link from the file to the command that generated. Since there is only ever one incoming link to a file node, this may be a reasonable solution.</p>
+  <p>Part of the changes to the Wrapper program involved accounting for the dangling references. Previously, every object had the ".secondary" file that could be used to keep track of dangling references. Now only the command objects have this file. This graph shows how the dangling reference test looks with command objects:</p>
+  <table border=1><tr><td><img src="cmd-dangling1.png"></td></tr></table>
+  <p>This test works as before - only foo.c is re-compiled, and the dangling reference (the red link) is removed from the .tup hierarchy.</p>
+  <p>The interesting part is that now we can change the configuration file (Makefile) and get some better results. I added some special logic to make sure the create/ object is made for the directory the Makefile is in when it gets modified. (Normally the create/ object is created only when files are added or removed to a directory, not when existing files are modified). This forces the Updater to re-run the Makefile and generate all the commands for that directory, so they can be compared against the previous invocation. This is the same example as last week, where I build everything, then modify the Makefile to change the target and run the Updater. Here is the graph after the Makefile is modified and the create phase runs:</p>
+  <table border=1><tr><td><img src="cmd-target1.png"></td></tr></table>
+  <p>This shows that the old target 'prog' should be deleted, while 'mainexe' needs to be created. After running the Updater, this is the result:</p>
+  <table border=1><tr><td><img src="cmd-target2.png"></td></tr></table>
+  <p>Note that foo.o and ok.o now have dangling references to the deleted command node. If one of these object files is re-created at a later point, the dangling reference will be cleaned up as usual. The nice part is that the old target 'prog' is deleted automatically by the Updater, so a user could just make a change to their configuration file and be sure that things are in their correct state (ie: in the same state as if the Makefile originally targeted 'mainexe'). The only difference are the dangling references lying around, but they aren't actually visible to the user unless they go digging through the .tup/object/ directory. This shows the shell session of what a user would see:</p>
+  <pre>
+   $ ls
+   Makefile  foo.c  foo.h  foo.o  ok.c  ok.o  prog
+   $ &lt;update Makefile&gt;
+   $ tup upd
+   Compile 'foo.c' into 'foo.o'
+   Compile 'ok.c' into 'ok.o'
+   Link 'foo.o ok.o' into 'mainexe'
+   [  ] 0/2 (  0%) tup wrap gcc foo.o ok.o -o mainexe
+   [= ] 1/2 ( 50%) Delete 71db4c4e
+   [==] 2/2 (100%) 
+   Delete: prog
+   $ ls
+   Makefile  foo.c  foo.h  foo.o  mainexe  ok.c  ok.o
+  </pre>
+  <p>The lines that start with "Compile" and "Link" are displayed by the Makefile during the create phase. As before, this just runs 'tup command', 'tup input', and 'tup output' to setup the appropriate objects. The lines with the progress bars are displayed by the Updater, along with the commands it runs.</p>
+  <p>Depending on the time left in the semester, the next thing to try is to conditionally compile files based on some feature setting. For example, the command object to compile foo.c would only be created if ENABLE_FOO was set. This would involve finding a place to set the flags, and then setting up dependencies so a directory's create phase can run when a flag it uses is changed.</p>
+  </li>
+
+  <li><a name="13"><b>Apr 13 - Apr 19</b></a>: <p>With the command-based Updater working, I tried to see how it would work by using configuration options. Basically this just entailed setting a variable in the Makefile, and deciding whether or not to build certain files based on its value. In this example, I'm building two C files - one of them (bar.c) is always built, while the other (foo.c) is conditionally compiled based on the value of CONFIG_FOO. This is similar to how the Linux kernel determines which source files to build. For example, if CONFIG_INPUT_JOYDEV is set, then the joydev.c file is compiled and linked into the kernel. Although I am currently setting the configuration variable directly in the Makefile, in the future it may be done in a separate file (similar to .config for the kernel). Here is the Makefile I am using:</p>
+  <pre>
+   CONFIG_FOO := 1
+
+   srcs := bar.c
+   ifeq (1,$(CONFIG_FOO))
+   srcs += foo.c
+   endif
+
+   objs := $(srcs:.c=.o)
+   prog := prog
+
+   # Change the directory "." to nothing - all other actual directory names get
+   # a / appended
+   d := $(if $(filter .,$(TUPWD)),,$(TUPWD)/)
+
+   ifneq (,$(strip $(objs)))
+   $(prog): $(objs)
+           @echo "Link '$(patsubst %,$d%,$^)' into '$d$@'"; \
+           create_dep "tup wrap gcc $(patsubst %,$d%,$^) -o $d$@" $(foreach f,$^,-i$f) -o$@
+   endif
+
+   $(objs): %.o: %.c
+           @echo "Compile '$d$&lt;' into '$d$@'"; \
+           create_dep "tup wrap gcc -c $d$&lt; -o $d$@" -i$&lt; -o$@
+
+   default: ; @true
+
+   .PHONY: $(prog) $(srcs) $(objs) default
+  </pre>
+  <p>This is nearly identical to the Makefile I have been using (in comparison to the previous version posted, this version works in subdirectories, and also generates the whole command object and input/output links in a single command invocation). The additions to support configuration variables are just at the type in the definition of the <em>srcs</em> variable. If CONFIG_FOO is set to 1, then the foo.c file is added to the list. When built in this configuration, both foo.c and bar.c are compiled and linked into the executable. If the Makefile is later updated to set CONFIG_FOO to 0, then the command to build foo.c is no longer generated. This is a similar case to when the target name changed, since the command object will be moved to the delete/ directory. The Updater will then delete the command object as well as the output file, foo.o. The program will be re-linked with only the bar.o object. Here is the dependency graph after the create phase runs:</p>
+  <table border=1><tr><td><img src="config_option_changed.png"></td></tr></table>
+  <p>Since we turned off the CONFIG_FOO variable, that side of the dependency tree is removed from the system, and the foo.o file that was created is removed. This leaves the system in a state that is almost identical to what it would be in if the option was initially off and the entire program was built (the only difference would be the dangling link from bar.o to the old linking command, which will be silently removed when the opportunity arises). Here is the output from the Updater during this process:</p>
+  <pre>
+  Compile 'bar.c' into 'bar.o'
+  Link 'bar.o' into 'prog'
+  [   ] 0/3 (  0%) tup wrap gcc bar.o -o prog
+  [=  ] 1/3 ( 33%) Delete 91ce14a6
+  [== ] 2/3 ( 66%) Delete: foo.o
+  Delete d64ac38d
+  [===] 3/3 (100%) 
+  </pre>
+  <p>Some other notes about the graph: first, the use of the .secondary links in order to detect dangling references is no longer required. Since the only time the deletion of files is triggered when command objects are removed, we don't need to identify particular files as "primary" or "secondary". The links that indicate the creation of a command are colored in green. As before, the Updater only sees the colored nodes (it does not need to process any nodes in black).</p>
+  <p>Now that the command object structure is fairly stabilized, I re-ran the benchmarks comparing tup vs. make. Unfortunately this change slowed down the initialization phase further, as seen in the following data:</p>
+  <table>
+  <caption><i>Command-based builder vs. make</i></caption>
+  <tr><td>
+  <table border=1>
+  <tr>
+    <td align=center><b>Size</b></td>
+    <td align=center><b>Make (time in s)</b></td>
+    <td align=center><b>Command builder (time in s)</b></td>
+  </tr>
+  <tr><td>1</td><td>0.05</td><td>0.07</td></tr>
+  <tr><td>10</td><td>0.48</td><td>0.72</td></tr>
+  <tr><td>100</td><td>4.2</td><td>6.78</td></tr>
+  <tr><td>1000</td><td>39.19</td><td>66.28</td></tr>
+  <tr><td>10000</td><td>386.57</td><td>1413.63</td></tr>
+  </table>
+  </td><td>
+  <img src="cmdbuilder-vs-make.png">
+  </td></tr></table>
+  <p>The other cases (C-file updated, header file updated, no files changed) are almost identical to before. In the future I will have to profile the initialization phase to see if there are redundant or unnecessary file accesses being performed that slow tup down.</p>
+
+  <li><a name="14"><b>Apr 20 - Apr 26</b></a>: <p>Most of my time was spent focusing on writing the technical report to provide a summary of the motivation and end result of tup. I did get a chance to run one more large simulation, as well as try to compile a real program (GNU Octave) using tup.</p>
+  <p>For the large simulation, I used the same test setup as before, but this time with 100,000 files. With this setup, tup took an enormous amount of time to initialize (almost 18 hours), as compared to make with 3.5 hours. However, each update in make takes 45 minutes, whereas changing a C file and updating using tup takes 0.09s. Even with the large initial investment required by tup, after about 20 updates the investment will begin to pay off. After that, each update saves a large chunk of time that could be better spent debugging the system or adding new features.</p>
+  <p>In order to see how easy or difficult tup would be to use for a real program, I tried to use it to compile GNU Octave version 2.1.73. This is a moderately sized program, with 29 C files, 456 Fortran files, and 595 C++ files. In order to get a more accurate comparison and simplify the problem a bit, I am not building the documentation in either case, and I am assuming that ./configure has already been executed. The main reason for skipping the documentation is that it is unnecessarily rebuilt every time make is executed, making the time-to-rebuild much higher than necessary for make.</p>
+  <p>There were a few issues getting Octave to build with tup. One issue I ran across was that I was not canonicalizing pathnames correctly if they ended in a '/' character. Depending on how the files were accessed, it was possible that both the directory objects "foo" and "foo/" would be created, causing the same directory to be updated twice. After fixing the canonicalize function to always remove any trailing slashes, this works as expected.</p>
+  <p>Another issue I had was that I had to update the configuration file (the Makefile) to work with C++ and Fortran files. On the surface this looked fairly straightforward, though a few times I forgot to list all of the files I was using in the .PHONY target (which is necessary for the non-standard way I am using make to parse the configuration files). This caused some odd side effects, because when a directory was processed in the create phase it would create different commands based on whether or not the compilation commands had already been executed or not. Once I got all of the files in the .PHONY target things worked as expected. Clearly though, if I ran into this trouble getting tup to work on a program, any other end-user would likely run into it as well. I think this means as far as the future work of tup is concerned, one of the first things I should focus on is an easier way to define configuration files that is more natural to tup (and therefore less error-prone). This should also have a nice side-effect of a slight speedup during initialization, since tup would not have to invoke make for each directory (which in turn invokes tup to create the command objects).</p>
+  <p>After these issues were dealt with, I was able to build octave and run the resulting executable. Touching a single C file (src/matherr.c) resulted in a 16.21s update time for make, and a 8.96s update time for tup. If nothing is changed, make has a baseline of about 3.86s, and tup has 0.004s. I'm not sure why make takes about 7 seconds longer when a file is changed, but under 4 seconds longer when no files are changed. The update was executed a few times, so the cache should have been properly warmed. I did verify that both make and tup executed the same commands when the file was changed.</p>
+  <p>Although a few seconds may seem like a trivial gain in tup's favor, consider that GNU Octave is just one package. On my Gentoo Linux system, there are 478 packages installed of varying sizes. Now assume I had the source code of all 478 packages installed and built. If I then change that one C file in Octave (which gets put into a library, so it could possibly be used by other programs outside of Octave), I do not think running make from the top would finish in any reasonable time. On the other hand, tup should easily be able to compile that file, re-create the archive, and link all dependent executables in short order.</p>
+
+</ul>
+</body>
+</html>

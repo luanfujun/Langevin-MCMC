@@ -1,0 +1,12 @@
+# Build for the future as this is the direction Apple is moving to
+CC = clang
+
+CFLAGS += -DAT_SYMLINK_NOFOLLOW=0x100
+CFLAGS += -DAT_REMOVEDIR=0x200
+
+# Implementation of *at() functions
+CFLAGS += -include compat/macosx.h
+
+TUP_SUID_GROUP = wheel
+
+TUP_SERVER = fuse

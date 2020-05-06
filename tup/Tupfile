@@ -1,0 +1,66 @@
+include_rules
+
+ifeq ($(TUP_SERVER),ldpreload)
+ifeq ($(X86_ARCH_SIBLINGS),y)
+  : src/ldpreload/*.64.o |> !ld |> tup-ldpreload.so
+else
+  : src/ldpreload/*.o |> !ld |> tup-ldpreload.so
+endif
+endif
+
+ifneq ($(TARGET),win32)
+client_objs += src/tup/vardict.o
+client_objs += src/tup/send_event.o
+client_objs += src/tup/flock/fcntl.o
+: $(client_objs) |> !ar |> libtup_client.a
+: src/tup/vardict.h |> !cp |> tup_client.h
+endif
+
+srcs = src/tup/*.o
+srcs += src/tup/tup/*.o
+srcs += src/tup/monitor/*.o
+srcs += src/tup/flock/*.o
+srcs += src/tup/server/*.o
+srcs += src/inih/*.o
+srcs += src/compat/*.o
+ifeq (@(TUP_USE_SYSTEM_SQLITE),y)
+LDFLAGS += -lsqlite3
+else
+srcs += src/sqlite3/*.o
+endif
+
+ifeq ($(use_system_pcre),y)
+LDFLAGS += `pcre-config --libs`
+else
+srcs += src/pcre/*.o
+endif
+
+ifneq ($(TARGET),win32)
+ifeq (@(TUP_SUDO_SUID),y)
+suid = ; chown root:$(TUP_SUID_GROUP) tup; chmod u+s tup
+endif
+
+ifeq ($(TUP_SERVER),fuse)
+LDFLAGS += `pkg-config fuse --libs`
+endif
+LDFLAGS += -lm
+LDFLAGS += -lpthread
+else
+: src/dllinject/*.o |> !dll -lpsapi |> tup-dllinject.dll
+: src/dllinject/*.o32 |> !dll32 -lpsapi |> tup-dllinject32.dll
+: src/compat/win32/detect/*.o32 |> !ld32 |> tup32detect$(PROGRAM_SUFFIX)
+
+srcs += src/compat/win32/*.o
+srcs += tup-dllinject.dll
+
+LDFLAGS += -Wl,--wrap=open
+LDFLAGS += -Wl,--wrap=close
+LDFLAGS += -Wl,--wrap=tmpfile
+LDFLAGS += -Wl,--wrap=dup
+LDFLAGS += -Wl,--wrap=__mingw_vprintf
+LDFLAGS += -Wl,--wrap=__mingw_vfprintf
+
+# This seems to only be needed on older (14.04 Ubuntu) MinGW toolchains, and can be removed for 16.04+
+LDFLAGS += -lole32
+endif
+: $(srcs) src/lua/liblua.a |> ^ LINK %o^ ./src/tup/link.sh "$(CC)" "$(CFLAGS)" "$(LDFLAGS)" "%o" "%f" $(suid) |> tup$(PROGRAM_SUFFIX) | tup-version.o

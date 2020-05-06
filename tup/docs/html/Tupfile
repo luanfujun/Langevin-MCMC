@@ -1,0 +1,33 @@
+.gitignore
+ifeq (@(TUP_WWW),y)
+
+pages += index.html
+pages += getting_started.html
+pages += examples.html
+pages += manual.html
+pages += lua_parser.html
+pages += tips_and_tricks.html
+pages += make_vs_tup.html
+pages += tup_vs_mordor.html
+pages += license.html
+pages += support.html
+
+examples += ex_a_first_tupfile.html
+examples += ex_dependencies.html
+examples += ex_generated_header.html
+examples += ex_multiple_directories.html
+
+luaexamples += ex_lua_examples.html
+
+ifeq (@(TUP_WWW_ANALYTICS),y)
+flags += -a
+endif
+
+: |> ^ GEN %o^ ./gen_ex_header.sh $(examples) > %o |> examples.inc
+: |> ^ GEN %o^ ./gen_ex_header.sh $(luaexamples) > %o |> luaexamples.inc
+: examples.inc luaexamples.inc |> ^ GEN %o^ ./gen_menu.sh -x %1f -l %2f $(pages) > %o |> menu.inc
+: |> ^ GEN %o^ ./gen_examples.sh $(examples) > %o |> examples.html
+: ../../tup.1 |> ^ man2html %o^ man2html %f > %o |> manual.html
+: foreach $(pages) $(examples) $(luaexamples) | menu.inc |> ^ GEN %o^ ./gen_page.sh $(flags) -m %1i %f > %o |> %f.gen
+
+endif
