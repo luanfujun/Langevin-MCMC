@@ -1,0 +1,27 @@
+# 3ds Max Wavefront OBJ Exporter v0.97b - (c)2007 guruware
+# File Created: 02.01.2013 21:17:24
+
+#
+# object picture_image
+#
+
+v  -59.9060 70.7702 108.8053
+v  -59.9060 70.7702 81.2053
+v  3.4675 70.7702 81.2053
+v  3.4675 70.7702 108.8053
+# 4 vertices
+
+vn 0.0000 -1.0000 -0.0000
+# 1 vertex normals
+
+vt 0.0000 1.0000 0.0000
+vt 0.0000 0.0000 0.0000
+vt 1.0000 0.0000 0.0000
+vt 1.0000 1.0000 0.0000
+# 4 texture coords
+
+g picture_image
+s 1
+f 1/1/1 2/2/1 3/3/1 4/4/1 
+# 1 polygons
+
